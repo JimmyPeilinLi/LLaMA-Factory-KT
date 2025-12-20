@@ -1,0 +1,56 @@
+### model
+model_name_or_path: /mnt/data/models/Qwen3-30B-A3B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+
+# 异构 LoRA 配置 (all_small_rank 策略)
+use_heterogeneous_lora: true
+attention_lora_rank: 16
+attention_lora_alpha: 32
+expert_lora_rank: 8
+expert_lora_alpha: 16
+lora_dropout: 0.05
+freeze_router: true
+
+# 自定义数据加载 (对齐 lora-without-regret)
+use_custom_data_loader: true
+custom_data_task: coding
+
+### deepspeed
+deepspeed: examples/deepspeed/ds_z3_e6_config.json
+
+### dataset (fallback if not using custom loader)
+template: qwen3
+cutoff_len: 2048
+# val_size: 0.05  # disabled for custom data loader
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: /mnt/data/lpl/klora/test/kllama_e6_1_all_small_rank
+logging_steps: 10
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-5
+max_steps: 1000
+lr_scheduler_type: linear
+warmup_steps: 50
+bf16: true
+ddp_timeout: 180000000
+seed: 42
+
+### eval (disabled for custom data loader)
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 100

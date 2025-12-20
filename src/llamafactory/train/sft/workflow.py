@@ -49,7 +49,25 @@ def run_sft(
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
-    dataset_module = get_dataset(template, model_args, data_args, training_args, stage="sft", **tokenizer_module)
+
+    # 自定义数据加载 (对齐 lora-without-regret)
+    if finetuning_args.use_custom_data_loader:
+        from ...data.custom_data_loader import load_dataset_for_task, DataCollatorForSFT
+
+        logger.info_rank0(f"Using custom data loader for task: {finetuning_args.custom_data_task}")
+        train_dataset, eval_dataset = load_dataset_for_task(
+            task=finetuning_args.custom_data_task,
+            tokenizer=tokenizer,
+            max_length=data_args.cutoff_len,
+            eval_split_ratio=data_args.val_size,
+        )
+        dataset_module = {
+            "train_dataset": train_dataset,
+            "eval_dataset": eval_dataset,
+        }
+    else:
+        dataset_module = get_dataset(template, model_args, data_args, training_args, stage="sft", **tokenizer_module)
+
     model = load_model(tokenizer, model_args, finetuning_args, training_args.do_train)
 
     if getattr(model, "is_quantized", False) and not training_args.do_train:

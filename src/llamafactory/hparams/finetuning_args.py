@@ -120,6 +120,39 @@ class LoraArguments:
         default=False,
         metadata={"help": "Whether or not to create a new adapter with randomly initialized weight."},
     )
+    # 异构 LoRA 参数 (对齐 lora-without-regret)
+    use_heterogeneous_lora: bool = field(
+        default=False,
+        metadata={"help": "Whether to use heterogeneous LoRA (different rank for attention vs experts)."},
+    )
+    attention_lora_rank: int = field(
+        default=16,
+        metadata={"help": "LoRA rank for attention layers (q_proj, k_proj, v_proj, o_proj)."},
+    )
+    attention_lora_alpha: int = field(
+        default=32,
+        metadata={"help": "LoRA alpha for attention layers."},
+    )
+    expert_lora_rank: int = field(
+        default=8,
+        metadata={"help": "LoRA rank for expert layers (gate_proj, up_proj, down_proj)."},
+    )
+    expert_lora_alpha: int = field(
+        default=16,
+        metadata={"help": "LoRA alpha for expert layers."},
+    )
+    freeze_router: bool = field(
+        default=True,
+        metadata={"help": "Whether to freeze the router (gate) parameters in MoE models."},
+    )
+    use_custom_data_loader: bool = field(
+        default=False,
+        metadata={"help": "Whether to use the custom data loader from lora-without-regret."},
+    )
+    custom_data_task: str = field(
+        default="coding",
+        metadata={"help": "Task name for custom data loader: 'coding' or 'gsm8k'."},
+    )
 
 
 @dataclass

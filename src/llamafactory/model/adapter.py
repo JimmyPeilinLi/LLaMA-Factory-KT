@@ -212,6 +212,39 @@ def _setup_lora_tuning(
         logger.info_rank0("Loaded adapter(s): {}".format(",".join(model_args.adapter_name_or_path)))
 
     if is_trainable and adapter_to_resume is None:  # create new lora weights while training
+        # 异构 LoRA 分支 (对齐 lora-without-regret)
+        if finetuning_args.use_heterogeneous_lora:
+            from .heterogeneous_lora import HeterogeneousLoRAInjector, create_lora_config_for_strategy
+            from .router_control import RouterController
+
+            logger.info_rank0("Fine-tuning method: Heterogeneous LoRA (all_small_rank)")
+
+            # 创建 all_small_rank 配置
+            lora_config = create_lora_config_for_strategy("all_small_rank")
+
+            # 覆盖 Attention 配置
+            lora_config["shared_config"]["rank"] = finetuning_args.attention_lora_rank
+            lora_config["shared_config"]["alpha"] = finetuning_args.attention_lora_alpha
+            lora_config["shared_config"]["dropout"] = finetuning_args.lora_dropout
+
+            # 覆盖 Expert 配置
+            lora_config["expert_config"]["hot_experts"]["rank"] = finetuning_args.expert_lora_rank
+            lora_config["expert_config"]["hot_experts"]["alpha"] = finetuning_args.expert_lora_alpha
+            lora_config["expert_config"]["hot_experts"]["dropout"] = finetuning_args.lora_dropout
+
+            # 注入 LoRA
+            injector = HeterogeneousLoRAInjector()
+            model = injector.inject(model, lora_config)
+
+            # 冻结 Router
+            if finetuning_args.freeze_router:
+                RouterController.set_router_trainable(model, trainable=False)
+
+            # 存储 injector 以便后续保存
+            model._heterogeneous_lora_injector = injector
+
+            return model
+
         if len(finetuning_args.lora_target) == 1 and finetuning_args.lora_target[0] == "all":
             target_modules = find_all_linear_modules(model, finetuning_args.freeze_vision_tower)
         else:

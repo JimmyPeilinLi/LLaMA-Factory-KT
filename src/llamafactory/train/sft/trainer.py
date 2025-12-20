@@ -177,3 +177,28 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
         with open(output_prediction_file, "w", encoding="utf-8") as f:
             for text, pred, label in zip(decoded_inputs, decoded_preds, decoded_labels):
                 f.write(json.dumps({"prompt": text, "predict": pred, "label": label}, ensure_ascii=False) + "\n")
+
+    @override
+    def _save(self, output_dir: Optional[str] = None, state_dict=None):
+        """覆盖保存方法以支持异构 LoRA"""
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 检查是否使用异构 LoRA
+        if hasattr(self.model, '_heterogeneous_lora_injector'):
+            from transformers.integrations import is_deepspeed_zero3_enabled
+
+            injector = self.model._heterogeneous_lora_injector
+            is_zero3 = is_deepspeed_zero3_enabled()
+
+            # 保存 LoRA 权重
+            injector.save_lora_weights(output_dir, zero3_enabled=is_zero3)
+
+            # 保存 trainer 状态
+            self.state.save_to_json(os.path.join(output_dir, "trainer_state.json"))
+
+            logger.info_rank0(f"Heterogeneous LoRA weights saved to {output_dir}")
+            return
+
+        # 原有保存逻辑
+        super()._save(output_dir, state_dict)
