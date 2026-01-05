@@ -30,7 +30,7 @@ from trl import AutoModelForCausalLMWithValueHead
 from ..extras import logging
 from ..extras.misc import count_parameters, skip_check_imports, try_download_model_from_other_hub
 from .adapter import init_adapter
-from .model_utils.ktransformers import load_kt_pretrained_model
+from .model_utils.kt_moe import KT_KERNEL_AVAILABLE, load_kt_model
 from .model_utils.liger_kernel import apply_liger_kernel
 from .model_utils.misc import register_autoclass
 from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretrained_model
@@ -143,11 +143,16 @@ def load_model(
 
     model = None
     lazy_load = False
-    if model_args.use_kt:
-        from ktransformers.sft.monkey_patch_torch_module import install_patch
 
-        install_patch()
-        model = load_kt_pretrained_model(config, model_args)
+    # KTransformers MoE backend (handles MoE layers with CPU AMX acceleration)
+    if model_args.use_kt:
+        if not KT_KERNEL_AVAILABLE:
+            raise ImportError(
+                "kt_kernel not found. Please install kt_kernel to use 'use_kt'."
+            )
+        logger.info_rank0("Loading model with KTransformers MoE backend")
+        model = load_kt_model(config, model_args, finetuning_args)
+
     elif model_args.use_unsloth:
         if model_args.adapter_name_or_path is not None:
             lazy_load = True

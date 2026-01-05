@@ -114,10 +114,11 @@ def launch():
             # NOTE: DO NOT USE shell=True to avoid security risk
             process = subprocess.run(
                 (
-                    "torchrun --nnodes {nnodes} --node_rank {node_rank} --nproc_per_node {nproc_per_node} "
+                    "{python} -m torch.distributed.run --nnodes {nnodes} --node_rank {node_rank} --nproc_per_node {nproc_per_node} "
                     "--master_addr {master_addr} --master_port {master_port} {file_name} {args}"
                 )
                 .format(
+                    python=sys.executable,
                     nnodes=nnodes,
                     node_rank=node_rank,
                     nproc_per_node=nproc_per_node,

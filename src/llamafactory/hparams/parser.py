@@ -149,7 +149,7 @@ def _check_extra_dependencies(
     training_args: Optional["TrainingArguments"] = None,
 ) -> None:
     if model_args.use_kt:
-        check_version("ktransformers", mandatory=True)
+        check_version("kt_kernel", mandatory=True)
 
     if model_args.use_unsloth:
         check_version("unsloth", mandatory=True)

@@ -463,47 +463,65 @@ class SGLangArguments:
 
 @dataclass
 class KTransformersArguments:
-    r"""Arguments pertaining to the KT training."""
+    r"""Arguments pertaining to KTransformers MoE backend.
+
+    KTransformers handles MoE layers with CPU AMX acceleration.
+    Attention layers use native HuggingFace implementation on GPU.
+    """
 
     use_kt: bool = field(
         default=False,
-        metadata={"help": "Whether To Use KTransformers Optimizations For LoRA Training."},
-    )
-    kt_optimize_rule: str | None = field(
-        default=None,
         metadata={
-            "help": "Path To The KTransformers Optimize Rule; See https://github.com/kvcache-ai/ktransformers/."
+            "help": "Whether to use KTransformers backend for MoE layers. "
+            "Provides CPU AMX acceleration for MoE forward/backward."
         },
     )
-    cpu_infer: int | None = field(
-        default=32,
-        metadata={"help": "Number Of CPU Cores Used For Computation."},
+    kt_backend: str = field(
+        default="AMXBF16",
+        metadata={
+            "help": "KT backend type: 'AMXBF16' for BF16 mode, 'AMXInt8' for INT8 quantization."
+        },
     )
-    chunk_size: int | None = field(
-        default=8192,
-        metadata={"help": "Chunk Size Used For CPU Compute In KTransformers."},
+    kt_num_threads: int = field(
+        default=60,
+        metadata={"help": "Number of CPU threads for KT inference."},
     )
-    mode: str | None = field(
-        default="normal",
-        metadata={"help": "Normal Or Long_Context For Llama Models."},
+    kt_tp_enabled: bool = field(
+        default=True,
+        metadata={"help": "Enable Tensor Parallelism across NUMA nodes."},
+    )
+    kt_max_cache_depth: int = field(
+        default=1,
+        metadata={
+            "help": "Maximum cache depth for gradient checkpointing. "
+            "Set to gradient_accumulation_steps for best memory efficiency."
+        },
+    )
+    kt_num_gpu_experts: int = field(
+        default=0,
+        metadata={
+            "help": "Number of MoE experts to run on GPU. "
+            "0 = all experts on CPU (default), >0 = hybrid GPU/CPU mode."
+        },
+    )
+    kt_weight_path: str | None = field(
+        default=None,
+        metadata={
+            "help": "Path to preprocessed CPU expert weights (output of convert_cpu_weights.py). "
+            "If None, experts are loaded from HuggingFace model in BF16."
+        },
     )
 
-    kt_maxlen: int = field(
-        default=4096,
-        metadata={"help": "Maximum Sequence (Prompt + Response) Length Of The KT Engine."},
-    )
-    kt_use_cuda_graph: bool = field(
-        default=True,
-        metadata={"help": "Whether To Use CUDA Graphs For The KT Engine."},
-    )
-    kt_mode: str = field(
-        default="normal",
-        metadata={"help": "Normal Or Long_Context Mode For The KT Engine."},
-    )
-    kt_force_think: bool = field(
-        default=False,
-        metadata={"help": "Force-Think Toggle For The KT Engine."},
-    )
+    def __post_init__(self):
+        if self.use_kt and self.kt_backend not in ("AMXBF16", "AMXInt8"):
+            raise ValueError(
+                f"Invalid kt_backend: {self.kt_backend}. "
+                "Must be 'AMXBF16' or 'AMXInt8'."
+            )
+        if self.kt_num_gpu_experts < 0:
+            raise ValueError(
+                f"kt_num_gpu_experts must be >= 0, got {self.kt_num_gpu_experts}"
+            )
 
 
 @dataclass
@@ -548,6 +566,7 @@ class ModelArguments(
         ExportArguments.__post_init__(self)
         VllmArguments.__post_init__(self)
         SGLangArguments.__post_init__(self)
+        KTransformersArguments.__post_init__(self)
 
     @classmethod
     def copyfrom(cls, source: "Self", **kwargs) -> "Self":

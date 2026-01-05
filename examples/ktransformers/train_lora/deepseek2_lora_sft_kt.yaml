@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: deepseek-ai/DeepSeek-V2-Lite
+model_name_or_path: /mnt/data3/models/DeepSeek-V2-Lite-Chat
 trust_remote_code: true
 
 ### method
@@ -39,10 +39,12 @@ ddp_timeout: 180000000
 resume_from_checkpoint: null
 
 ### ktransformers
-use_kt: true # use KTransformers as LoRA sft backend
-kt_optimize_rule: examples/kt_optimize_rules/DeepSeek-V2-Lite-Chat-sft-amx.yaml
-cpu_infer: 32
-chunk_size: 8192
+use_kt: true                    # 启用 KTransformers MoE 后端
+kt_backend: AMXInt8             # AMX 后端类型: AMXBF16 或 AMXInt8
+kt_num_threads: 60              # CPU 线程数
+kt_tp_enabled: true             # 启用 NUMA 张量并行
+kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU, Phase 2 功能)
+kt_weight_path: /mnt/data3/models/DeepSeek-V2-Lite-INT8          # 预处理权重路径 (可选，用于 INT4/INT8)
 
 ### eval
 # eval_dataset: alpaca_en_demo

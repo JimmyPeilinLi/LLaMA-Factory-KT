@@ -99,22 +99,21 @@ def run_sft(
 
     # Initialize our Trainer
     if model_args.use_kt:
-        from ktransformers.sft.lora import KTrainer  # type: ignore
-        from ktransformers.util.globals import GLOBAL_CONFIG  # type: ignore
+        # KTransformers MoE backend - handles MoE layers with CPU AMX
+        from .kt_trainer import create_kt_trainer
 
-        GLOBAL_CONFIG._config["mod"] = "sft"
-
-        trainer = KTrainer(
+        trainer = create_kt_trainer(
             model=model,
-            args=training_args,
-            tokenizer=tokenizer_module,
+            training_args=training_args,
+            finetuning_args=finetuning_args,
+            model_args=model_args,
             data_collator=data_collator,
+            tokenizer_module=tokenizer_module,
             callbacks=callbacks,
+            gen_kwargs=gen_kwargs,
             **dataset_module,
             **metric_module,
         )
-        trainer.model_accepts_loss_kwargs = False
-        model.config.use_cache = False
 
     else:
         trainer = CustomSeq2SeqTrainer(
