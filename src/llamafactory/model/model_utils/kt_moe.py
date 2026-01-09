@@ -106,6 +106,7 @@ class MOEArchConfig:
     intermediate_size: int  # MLP intermediate dimension
     num_experts_per_tok: int  # Number of experts per token (top-k)
     has_shared_experts: bool = False  # Whether model has shared experts
+    router_type: str = "linear"  # Router type: "linear" (Qwen/Mixtral) or "deepseek_gate" (DeepSeek)
 
 
 def get_moe_arch_config(config: "PretrainedConfig") -> MOEArchConfig:
@@ -133,6 +134,7 @@ def get_moe_arch_config(config: "PretrainedConfig") -> MOEArchConfig:
             intermediate_size=config.moe_intermediate_size,
             num_experts_per_tok=config.num_experts_per_tok,
             has_shared_experts=getattr(config, "n_shared_experts", 0) > 0,
+            router_type="deepseek_gate",  # DeepSeek router returns (topk_idx, topk_weight, aux_loss)
         )
     elif "DeepseekV3" in arch:
         return MOEArchConfig(
@@ -144,6 +146,7 @@ def get_moe_arch_config(config: "PretrainedConfig") -> MOEArchConfig:
             intermediate_size=config.moe_intermediate_size,
             num_experts_per_tok=config.num_experts_per_tok,
             has_shared_experts=getattr(config, "n_shared_experts", 0) > 0,
+            router_type="deepseek_gate",  # DeepSeek router returns (topk_idx, topk_weight, aux_loss)
         )
     elif "Qwen2Moe" in arch or "Qwen3Moe" in arch:
         return MOEArchConfig(
@@ -229,6 +232,39 @@ def extract_moe_weights(
     down_proj = torch.stack(down_weights, dim=0)
 
     return gate_proj, up_proj, down_proj
+
+
+def _clear_original_expert_weights(moe_module: nn.Module, moe_config: MOEArchConfig) -> None:
+    """
+    Clear original expert weights to free memory.
+
+    After the AMX kernel has loaded the weights, we can release the HuggingFace
+    weight references so Python GC can reclaim the memory. This is especially
+    important when using kt_weight_path, where the original BF16 weights were
+    loaded just as placeholders.
+
+    Args:
+        moe_module: Original MoE module with expert weights
+        moe_config: MoE architecture configuration
+    """
+    experts = getattr(moe_module, moe_config.experts_attr, None)
+    if experts is None:
+        return
+
+    for expert_idx, expert in enumerate(experts):
+        for weight_name in moe_config.weight_names:
+            proj = getattr(expert, weight_name, None)
+            if proj is not None and hasattr(proj, "weight"):
+                # Replace weight with an empty tensor to release memory
+                # Note: We keep the module structure but release the large tensor
+                original_device = proj.weight.device
+                original_dtype = proj.weight.dtype
+                proj.weight = nn.Parameter(
+                    torch.empty(0, device=original_device, dtype=original_dtype),
+                    requires_grad=False,
+                )
+
+    logger.debug(f"Cleared original expert weights for MoE module")
 
 
 # =============================================================================
@@ -348,7 +384,8 @@ class MOEAMXFunction(torch.autograd.Function):
     def forward(
         ctx,
         hidden_states: torch.Tensor,
-        router_logits: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
         moe_amx: Any,
         cpu_infer: Any,
         lora_params: dict[str, nn.Parameter],
@@ -362,7 +399,8 @@ class MOEAMXFunction(torch.autograd.Function):
         Args:
             ctx: Autograd context
             hidden_states: Input tensor [batch, seq_len, hidden_size]
-            router_logits: Router logits from original router
+            topk_ids: Expert indices from router [num_tokens, num_experts_per_tok]
+            topk_weights: Routing weights from router [num_tokens, num_experts_per_tok]
             moe_amx: AMXBF16_SFT_MOE or AMXInt8_SFT_MOE instance
             cpu_infer: CPUInfer instance
             lora_params: LoRA parameter dictionary
@@ -378,24 +416,19 @@ class MOEAMXFunction(torch.autograd.Function):
         original_dtype = hidden_states.dtype
         batch_size, seq_len, _ = hidden_states.shape
 
-        # 1. Compute routing (on original device)
-        routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float32)
-        topk_weights, topk_ids = torch.topk(routing_weights, num_experts_per_tok, dim=-1)
-        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
-
-        # 2. Flatten for AMX
+        # 1. Flatten topk results for AMX (routing already done by caller)
         qlen = batch_size * seq_len
         expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
         weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
 
-        # 3. Prepare input
+        # 2. Prepare input
         input_data = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
         output = torch.zeros((qlen, hidden_size), dtype=torch.bfloat16, device="cpu").contiguous()
 
-        # 4. Batch size tensor
+        # 3. Batch size tensor
         bsz_tensor = torch.tensor([qlen], device="cpu")
 
-        # 5. Call AMX forward
+        # 4. Call AMX forward
         cpu_infer.submit(
             moe_amx.forward_sft_task(
                 bsz_tensor.data_ptr(),
@@ -409,7 +442,7 @@ class MOEAMXFunction(torch.autograd.Function):
         )
         cpu_infer.sync()
 
-        # 6. Save for backward
+        # 5. Save for backward
         ctx.moe_amx = moe_amx
         ctx.cpu_infer = cpu_infer
         ctx.lora_params = lora_params
@@ -420,7 +453,7 @@ class MOEAMXFunction(torch.autograd.Function):
         ctx.original_device = original_device
         ctx.original_dtype = original_dtype
 
-        # 7. Reshape and return
+        # 6. Reshape and return
         output = output.view(batch_size, seq_len, hidden_size)
         return output.to(device=original_device, dtype=original_dtype)
 
@@ -445,12 +478,15 @@ class MOEAMXFunction(torch.autograd.Function):
         # 2. Allocate gradient buffers
         grad_input = torch.zeros((qlen, hidden_size), dtype=torch.bfloat16, device="cpu").contiguous()
 
-        grad_gate_lora_a = torch.zeros_like(ctx.lora_params["gate_lora_a"].data)
-        grad_gate_lora_b = torch.zeros_like(ctx.lora_params["gate_lora_b"].data)
-        grad_up_lora_a = torch.zeros_like(ctx.lora_params["up_lora_a"].data)
-        grad_up_lora_b = torch.zeros_like(ctx.lora_params["up_lora_b"].data)
-        grad_down_lora_a = torch.zeros_like(ctx.lora_params["down_lora_a"].data)
-        grad_down_lora_b = torch.zeros_like(ctx.lora_params["down_lora_b"].data)
+        # BUG-007 fix: 梯度 tensor 必须在 CPU 上，因为 AMX C++ 代码需要 CPU 内存访问
+        # torch.zeros_like() 会继承原 tensor 的 device，如果 LoRA 参数在 GPU 上，
+        # 梯度也会在 GPU 上，导致 C++ 代码访问 GPU 内存时 SIGSEGV
+        grad_gate_lora_a = torch.zeros_like(ctx.lora_params["gate_lora_a"].data, device="cpu")
+        grad_gate_lora_b = torch.zeros_like(ctx.lora_params["gate_lora_b"].data, device="cpu")
+        grad_up_lora_a = torch.zeros_like(ctx.lora_params["up_lora_a"].data, device="cpu")
+        grad_up_lora_b = torch.zeros_like(ctx.lora_params["up_lora_b"].data, device="cpu")
+        grad_down_lora_a = torch.zeros_like(ctx.lora_params["down_lora_a"].data, device="cpu")
+        grad_down_lora_b = torch.zeros_like(ctx.lora_params["down_lora_b"].data, device="cpu")
 
         # 3. Call AMX backward
         ctx.cpu_infer.submit(
@@ -468,11 +504,14 @@ class MOEAMXFunction(torch.autograd.Function):
         ctx.cpu_infer.sync()
 
         # 4. Accumulate LoRA gradients to Parameters
+        # BUG-007 fix: 梯度在 CPU 上计算（AMX 需要），但 param 在 GPU 上
+        # 需要将梯度移动到 param 所在的设备
         def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
+            grad_on_device = grad.to(param.device)  # CPU → GPU (方案 A)
             if param.grad is None:
-                param.grad = grad.clone()
+                param.grad = grad_on_device.clone()
             else:
-                param.grad.add_(grad)
+                param.grad.add_(grad_on_device)
 
         accumulate_grad(ctx.lora_params["gate_lora_a"], grad_gate_lora_a)
         accumulate_grad(ctx.lora_params["gate_lora_b"], grad_gate_lora_b)
@@ -486,7 +525,8 @@ class MOEAMXFunction(torch.autograd.Function):
         grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
 
         # Return None for non-Tensor inputs
-        return grad_input, None, None, None, None, None, None, None
+        # forward args: hidden_states, topk_ids, topk_weights, moe_amx, cpu_infer, lora_params, moe_config, hidden_size, num_experts_per_tok
+        return grad_input, None, None, None, None, None, None, None, None
 
 
 # =============================================================================
@@ -530,6 +570,7 @@ class MOELayerWrapper(nn.Module):
         self.moe_config = moe_config
         self.hidden_size = hidden_size
         self.layer_idx = layer_idx
+        self.router_type = moe_config.router_type  # "linear" or "deepseek_gate"
 
         # Store LoRA params as module parameters for optimizer
         self.lora_params = nn.ParameterDict(lora_params)
@@ -555,13 +596,25 @@ class MOELayerWrapper(nn.Module):
         """
         batch_size, seq_len, _ = hidden_states.shape
 
-        # Compute router logits
-        router_logits = self.router(hidden_states.view(-1, self.hidden_size))
+        # Get topk_ids and topk_weights based on router type
+        if self.router_type == "deepseek_gate":
+            # DeepSeek router expects 3D input and returns (topk_idx, topk_weight, aux_loss)
+            topk_ids, topk_weights, aux_loss = self.router(hidden_states)
+        else:
+            # Qwen/Mixtral router is nn.Linear, expects 2D input, returns raw logits
+            router_logits = self.router(hidden_states.view(-1, self.hidden_size))
+            # Manually apply softmax and topk
+            routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float32)
+            topk_weights, topk_ids = torch.topk(
+                routing_weights, self.moe_config.num_experts_per_tok, dim=-1
+            )
+            topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
-        # Apply AMX forward
+        # Apply AMX forward with unified interface
         moe_output = MOEAMXFunction.apply(
             hidden_states,
-            router_logits,
+            topk_ids,
+            topk_weights,
             self.moe_amx,
             self.cpu_infer,
             dict(self.lora_params),
@@ -765,6 +818,12 @@ def wrap_moe_layers_with_amx(
         wrappers.append(wrapper)
         moe_layer_count += 1
 
+        # Clear original HuggingFace expert weights to free memory
+        # This is safe because:
+        # - BF16 mode: weights were already extracted and stored in wrapper._base_weights
+        # - INT8 mode: weights were loaded from kt_weight_path, HuggingFace weights are not needed
+        _clear_original_expert_weights(moe_module, moe_config)
+
     logger.info(f"Wrapped {moe_layer_count} MoE layers with KT AMX")
     return wrappers
 
@@ -783,7 +842,11 @@ def load_kt_model(
     - Attention, Embedding, LM Head -> GPU
     - Router -> GPU
     - GPU experts (0 to kt_num_gpu_experts-1) -> GPU
-    - CPU experts (kt_num_gpu_experts to total-1) -> CPU or meta
+    - CPU experts (kt_num_gpu_experts to total-1) -> CPU
+
+    Note: We always load expert weights to CPU (never use "meta" device) because
+    HuggingFace Trainer's dispatch_model() cannot handle meta tensors. After
+    wrapping with AMX, the original HuggingFace weights are cleared to save memory.
 
     Args:
         config: HuggingFace model configuration
@@ -826,22 +889,15 @@ def load_kt_model(
         **loading_kwargs,
     )
 
-    # 3. Verify expert device placement
-    from .kt_loader import get_expert_device, check_experts_on_meta_device
+    # 3. Move non-expert parts to GPU (experts stay on CPU for KT AMX)
+    from .kt_loader import move_non_experts_to_gpu, get_expert_device
 
     moe_config = get_moe_arch_config(config)
-    expert_device = get_expert_device(model, moe_config)
-    logger.info(f"MoE experts loaded on device: {expert_device}")
+    move_non_experts_to_gpu(model, moe_config, device="cuda:0")
 
-    if check_experts_on_meta_device(model, moe_config):
-        if model_args.kt_weight_path is None:
-            raise KTAMXConfigError(
-                "MoE experts are on meta device but kt_weight_path is not provided. "
-                "Please provide kt_weight_path to load preprocessed weights."
-            )
-        logger.info(
-            f"MoE experts on meta device - will load INT8 weights from: {model_args.kt_weight_path}"
-        )
+    # Verify expert device placement
+    expert_device = get_expert_device(model, moe_config)
+    logger.info(f"MoE experts on device: {expert_device}")
 
     # 4. Initialize CPUInfer
     cpu_infer = init_cpu_infer(model_args)

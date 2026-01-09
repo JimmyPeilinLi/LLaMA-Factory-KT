@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
-class KTTrainer(CustomSeq2SeqTrainer):
+class KTrainer(CustomSeq2SeqTrainer):
     """
     SFT Trainer with KTransformers AMX MOE backend support.
 
@@ -252,22 +252,22 @@ class KTTrainer(CustomSeq2SeqTrainer):
             from ...model.model_utils.kt_moe import update_kt_lora_pointers
             update_kt_lora_pointers(self.model)
 
-    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval):
+    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=None):
         """Override to update LoRA pointers before evaluation."""
         # Update LoRA pointers before any evaluation
         self._update_lora_pointers()
-        return super()._maybe_log_save_evaluate(tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval)
+        return super()._maybe_log_save_evaluate(tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=learning_rate)
 
 
 class KTAMXOptimizerCallback:
     """
     Callback to handle LoRA weight pointer updates after optimizer.step().
 
-    This is used internally by KTTrainer to ensure LoRA pointers are
+    This is used internally by KTrainer to ensure LoRA pointers are
     synchronized after each optimizer update in TP mode.
     """
 
-    def __init__(self, trainer: "KTTrainer"):
+    def __init__(self, trainer: "KTrainer"):
         self.trainer = trainer
 
     def on_step_end(self, args, state, control, **kwargs):
@@ -289,9 +289,9 @@ def create_kt_trainer(
     tokenizer_module: dict,
     callbacks: Optional[list] = None,
     **kwargs,
-) -> KTTrainer:
+) -> KTrainer:
     """
-    Factory function to create KTTrainer with proper configuration.
+    Factory function to create KTrainer with proper configuration.
 
     Args:
         model: The model to train
@@ -304,9 +304,9 @@ def create_kt_trainer(
         **kwargs: Additional arguments for trainer
 
     Returns:
-        Configured KTTrainer instance
+        Configured KTrainer instance
     """
-    trainer = KTTrainer(
+    trainer = KTrainer(
         model=model,
         args=training_args,
         finetuning_args=finetuning_args,

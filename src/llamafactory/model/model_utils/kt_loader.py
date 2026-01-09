@@ -104,10 +104,11 @@ def build_kt_device_map(
 
     For KT fine-tuning:
     - GPU experts (0 to kt_num_gpu_experts-1) -> GPU (cuda:0)
-    - CPU experts (kt_num_gpu_experts to total-1) -> CPU or "meta"
+    - CPU experts (kt_num_gpu_experts to total-1) -> CPU
 
-    If kt_weight_path is provided, CPU experts are set to "meta" (skip loading)
-    because they will be loaded separately from the preprocessed weight file.
+    Note: We always use "cpu" instead of "meta" because meta tensors cannot be
+    dispatched by HuggingFace Trainer. Even with kt_weight_path, we load BF16
+    weights first, then replace them with INT8 weights in wrap_moe_layers_with_amx().
 
     Args:
         config: HuggingFace model configuration
@@ -152,18 +153,13 @@ def build_kt_device_map(
                 # GPU experts -> GPU (already covered by layer mapping, but explicit)
                 device_map[expert_key] = "cuda:0"
             else:
-                # CPU experts -> CPU or meta
-                if has_kt_weight_path:
-                    # Skip loading, will load from kt_weight_path
-                    device_map[expert_key] = "meta"
-                else:
-                    # Load from HuggingFace to CPU directly
-                    device_map[expert_key] = "cpu"
+                # CPU experts -> CPU (always use "cpu", not "meta")
+                # Even with kt_weight_path, we load BF16 first, then replace with INT8
+                device_map[expert_key] = "cpu"
 
     logger.info(
         f"Built KT device_map: {num_gpu_experts} GPU experts, "
-        f"{num_experts - num_gpu_experts} CPU experts "
-        f"({'skip loading' if has_kt_weight_path else 'load to CPU'})"
+        f"{num_experts - num_gpu_experts} CPU experts"
     )
 
     return device_map
@@ -225,19 +221,18 @@ def build_kt_device_map_simplified(
         experts_prefix = f"{layer_prefix}.{moe_config.moe_layer_attr}.{moe_config.experts_attr}"
 
         if num_gpu_experts == 0:
-            # All experts to CPU/meta
-            if has_kt_weight_path:
-                device_map[experts_prefix] = "meta"
-            else:
-                device_map[experts_prefix] = "cpu"
+            # All experts to CPU
+            # Note: We always use "cpu" instead of "meta" because:
+            # - "meta" creates placeholder tensors that can't be dispatched by Trainer
+            # - Even with kt_weight_path, we load BF16 weights first, then replace with INT8
+            device_map[experts_prefix] = "cpu"
         else:
             # Hybrid mode: need per-expert mapping
             # Fall back to detailed mapping
             return build_kt_device_map(config, model_args)
 
     logger.info(
-        f"Built simplified KT device_map: all layers on GPU, "
-        f"routed experts on {'meta' if has_kt_weight_path else 'CPU'}"
+        f"Built simplified KT device_map: all layers on GPU, routed experts on CPU"
     )
 
     return device_map
@@ -256,21 +251,76 @@ def get_kt_loading_kwargs(
 
     Returns:
         Dictionary of kwargs for from_pretrained()
-    """
-    # Use simplified mapping for pure CPU mode (kt_num_gpu_experts=0)
-    if model_args.kt_num_gpu_experts == 0:
-        device_map = build_kt_device_map_simplified(config, model_args)
-    else:
-        device_map = build_kt_device_map(config, model_args)
 
+    Note:
+        We load the entire model to CPU first (device_map="cpu") and then
+        manually move non-expert parts to GPU. This avoids accelerate's
+        meta tensor behavior when using device_map with specific device assignments,
+        which creates meta placeholders for CPU-mapped parameters.
+    """
     return {
         "config": config,
         "torch_dtype": torch.bfloat16,
-        "device_map": device_map,
+        # Load everything to CPU first - this ensures actual weight loading
+        # We'll move non-expert parts to GPU in post-processing
+        "device_map": "cpu",
         "trust_remote_code": model_args.trust_remote_code,
         "token": model_args.hf_hub_token,
         "low_cpu_mem_usage": True,
     }
+
+
+def move_non_experts_to_gpu(
+    model: "PreTrainedModel",
+    moe_config: "MOEArchConfig",
+    device: str = "cuda:0",
+) -> None:
+    """
+    Move all non-expert parameters to GPU after loading.
+
+    This is called after model loading to move Attention, Embedding, LM Head,
+    Router, and Shared Experts to GPU while keeping routed experts on CPU.
+
+    Args:
+        model: The loaded model
+        moe_config: MoE architecture configuration
+        device: Target GPU device
+    """
+    # Move embedding and final layers
+    model.model.embed_tokens.to(device)
+    model.model.norm.to(device)
+    model.lm_head.to(device)
+
+    # Move each layer's non-expert components
+    for layer_idx, layer in enumerate(model.model.layers):
+        # Move attention
+        layer.self_attn.to(device)
+
+        # Move layer norms
+        if hasattr(layer, "input_layernorm"):
+            layer.input_layernorm.to(device)
+        if hasattr(layer, "post_attention_layernorm"):
+            layer.post_attention_layernorm.to(device)
+
+        # Get MoE module
+        moe_module = getattr(layer, moe_config.moe_layer_attr, None)
+        if moe_module is None:
+            # Dense layer - move entire MLP to GPU
+            layer.mlp.to(device)
+            continue
+
+        # Move router to GPU
+        router = getattr(moe_module, moe_config.router_attr, None)
+        if router is not None:
+            router.to(device)
+
+        # Move shared experts to GPU if present
+        if hasattr(moe_module, "shared_experts") and moe_module.shared_experts is not None:
+            moe_module.shared_experts.to(device)
+
+        # Keep routed experts on CPU - they will be handled by KT AMX
+
+    logger.info(f"Moved non-expert parameters to {device}")
 
 
 # =============================================================================

@@ -511,6 +511,14 @@ class KTransformersArguments:
             "If None, experts are loaded from HuggingFace model in BF16."
         },
     )
+    kt_moe_lora_device: str = field(
+        default="gpu",
+        metadata={
+            "help": "Device for MoE routed experts LoRA parameters. "
+            "'gpu': LoRA params on GPU, gradients computed on CPU then transferred (recommended). "
+            "'cpu': LoRA params on CPU (not implemented yet)."
+        },
+    )
 
     def __post_init__(self):
         if self.use_kt and self.kt_backend not in ("AMXBF16", "AMXInt8"):
@@ -521,6 +529,16 @@ class KTransformersArguments:
         if self.kt_num_gpu_experts < 0:
             raise ValueError(
                 f"kt_num_gpu_experts must be >= 0, got {self.kt_num_gpu_experts}"
+            )
+        if self.kt_moe_lora_device not in ("gpu", "cpu"):
+            raise ValueError(
+                f"Invalid kt_moe_lora_device: {self.kt_moe_lora_device}. "
+                "Must be 'gpu' or 'cpu'."
+            )
+        if self.use_kt and self.kt_moe_lora_device == "cpu":
+            raise NotImplementedError(
+                "kt_moe_lora_device='cpu' is not implemented yet. "
+                "Please use 'gpu' (default). CPU mode will be added in a future release."
             )
 
 
