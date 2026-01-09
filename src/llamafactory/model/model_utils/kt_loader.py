@@ -304,8 +304,11 @@ def move_non_experts_to_gpu(
 
         # Get MoE module
         moe_module = getattr(layer, moe_config.moe_layer_attr, None)
-        if moe_module is None:
-            # Dense layer - move entire MLP to GPU
+        # Check if this is actually a MoE layer by looking for experts attribute
+        # For DeepSeek-V2: layer 0 has DeepseekMLP (dense), layers 1-26 have DeepseekV2MoE
+        # Both have moe_layer_attr="mlp", but only MoE has "experts" attribute
+        if moe_module is None or not hasattr(moe_module, moe_config.experts_attr):
+            # Dense layer (no experts) - move entire MLP to GPU
             layer.mlp.to(device)
             continue
 

@@ -949,3 +949,136 @@ def update_kt_lora_pointers(model: "PreTrainedModel"):
     if hasattr(model, "_kt_wrappers"):
         for wrapper in model._kt_wrappers:
             wrapper.update_lora_pointers()
+
+
+def load_moe_lora_from_adapter(model: "PreTrainedModel", adapter_path: str):
+    """
+    Load MoE LoRA weights from PEFT adapter into KT wrappers.
+
+    PEFT saves MoE LoRA with keys like:
+    - base_model.model.model.layers.{layer}.mlp.original_moe.experts.{expert}.gate_proj.lora_A.weight
+
+    KT expects:
+    - gate_lora_a: [num_experts, lora_rank, hidden_size]
+    - gate_lora_b: [num_experts, intermediate_size, lora_rank]
+
+    Args:
+        model: Model with KT AMX wrappers
+        adapter_path: Path to PEFT adapter directory
+    """
+    import os
+    import re
+    from safetensors import safe_open
+
+    wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        logger.warning("No KT wrappers found, skipping MoE LoRA loading")
+        return
+
+    # Build layer_idx -> wrapper mapping
+    wrapper_map = {w.layer_idx: w for w in wrappers}
+
+    # Load adapter weights
+    adapter_file = os.path.join(adapter_path, "adapter_model.safetensors")
+    if not os.path.exists(adapter_file):
+        adapter_file = os.path.join(adapter_path, "adapter_model.bin")
+        if not os.path.exists(adapter_file):
+            logger.warning(f"No adapter file found at {adapter_path}")
+            return
+
+    logger.info(f"Loading MoE LoRA from {adapter_file}")
+
+    # Parse MoE LoRA weights from adapter
+    # Key pattern: base_model.model.model.layers.{layer}.mlp.original_moe.experts.{expert}.{proj}.lora_{A/B}.weight
+    moe_pattern = re.compile(
+        r"base_model\.model\.model\.layers\.(\d+)\.mlp\.original_moe\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.lora_(A|B)\.weight"
+    )
+
+    # Group weights by layer
+    layer_weights = {}  # layer_idx -> {expert_idx -> {proj -> {A/B: tensor}}}
+
+    with safe_open(adapter_file, framework="pt") as f:
+        for key in f.keys():
+            match = moe_pattern.match(key)
+            if match:
+                layer_idx = int(match.group(1))
+                expert_idx = int(match.group(2))
+                proj_name = match.group(3)  # gate_proj, up_proj, down_proj
+                ab = match.group(4)  # A or B
+
+                if layer_idx not in layer_weights:
+                    layer_weights[layer_idx] = {}
+                if expert_idx not in layer_weights[layer_idx]:
+                    layer_weights[layer_idx][expert_idx] = {}
+                if proj_name not in layer_weights[layer_idx][expert_idx]:
+                    layer_weights[layer_idx][expert_idx][proj_name] = {}
+
+                tensor = f.get_tensor(key)
+                layer_weights[layer_idx][expert_idx][proj_name][ab] = tensor
+
+    # Convert and load into KT wrappers
+    loaded_count = 0
+    for layer_idx, experts_dict in layer_weights.items():
+        if layer_idx not in wrapper_map:
+            logger.warning(f"No KT wrapper for layer {layer_idx}, skipping")
+            continue
+
+        wrapper = wrapper_map[layer_idx]
+        num_experts = wrapper.moe_config.expert_num
+        lora_rank = wrapper.lora_params["gate_lora_a"].shape[1]
+        hidden_size = wrapper.hidden_size
+        intermediate_size = wrapper.moe_config.intermediate_size
+
+        # Initialize tensors for all experts
+        gate_lora_a = torch.zeros(num_experts, lora_rank, hidden_size, dtype=torch.bfloat16)
+        gate_lora_b = torch.zeros(num_experts, intermediate_size, lora_rank, dtype=torch.bfloat16)
+        up_lora_a = torch.zeros(num_experts, lora_rank, hidden_size, dtype=torch.bfloat16)
+        up_lora_b = torch.zeros(num_experts, intermediate_size, lora_rank, dtype=torch.bfloat16)
+        down_lora_a = torch.zeros(num_experts, lora_rank, intermediate_size, dtype=torch.bfloat16)
+        down_lora_b = torch.zeros(num_experts, hidden_size, lora_rank, dtype=torch.bfloat16)
+
+        # Fill in from adapter weights
+        for expert_idx, proj_dict in experts_dict.items():
+            if expert_idx >= num_experts:
+                continue
+
+            for proj_name, ab_dict in proj_dict.items():
+                # PEFT format: lora_A.weight [lora_rank, in_features]
+                #              lora_B.weight [out_features, lora_rank]
+                # KT format: lora_a [num_experts, lora_rank, in_features]
+                #            lora_b [num_experts, out_features, lora_rank]
+
+                if "A" in ab_dict:
+                    a_tensor = ab_dict["A"].to(torch.bfloat16)  # [lora_rank, in_features]
+                    if proj_name == "gate_proj":
+                        gate_lora_a[expert_idx] = a_tensor
+                    elif proj_name == "up_proj":
+                        up_lora_a[expert_idx] = a_tensor
+                    elif proj_name == "down_proj":
+                        down_lora_a[expert_idx] = a_tensor
+
+                if "B" in ab_dict:
+                    b_tensor = ab_dict["B"].to(torch.bfloat16)  # [out_features, lora_rank]
+                    if proj_name == "gate_proj":
+                        gate_lora_b[expert_idx] = b_tensor
+                    elif proj_name == "up_proj":
+                        up_lora_b[expert_idx] = b_tensor
+                    elif proj_name == "down_proj":
+                        down_lora_b[expert_idx] = b_tensor
+
+        # Copy to wrapper's lora_params (in-place to maintain tensor pointers)
+        device = wrapper.lora_params["gate_lora_a"].device
+        wrapper.lora_params["gate_lora_a"].data.copy_(gate_lora_a.to(device))
+        wrapper.lora_params["gate_lora_b"].data.copy_(gate_lora_b.to(device))
+        wrapper.lora_params["up_lora_a"].data.copy_(up_lora_a.to(device))
+        wrapper.lora_params["up_lora_b"].data.copy_(up_lora_b.to(device))
+        wrapper.lora_params["down_lora_a"].data.copy_(down_lora_a.to(device))
+        wrapper.lora_params["down_lora_b"].data.copy_(down_lora_b.to(device))
+
+        loaded_count += 1
+        logger.debug(f"Loaded MoE LoRA for layer {layer_idx} ({len(experts_dict)} experts)")
+
+    # Update AMX operator pointers
+    update_kt_lora_pointers(model)
+
+    logger.info(f"Loaded MoE LoRA into {loaded_count} KT wrappers from {adapter_path}")

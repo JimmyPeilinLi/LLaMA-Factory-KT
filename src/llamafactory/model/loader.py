@@ -240,4 +240,34 @@ def load_model(
         for name, param in model.named_parameters():
             print(f"name: {name}, dtype: {param.dtype}, device: {param.device}, trainable: {param.requires_grad}")
 
+    # Debug: Print KT and LoRA loading status
+    if int(os.getenv("LOCAL_RANK", "0")) == 0:
+        print("\n" + "=" * 60)
+        print("DEBUG: Model structure after loading")
+        print("=" * 60)
+
+        # Check KT wrappers
+        kt_wrappers = getattr(model, "_kt_wrappers", [])
+        print(f"KT wrappers count: {len(kt_wrappers)}")
+
+        # Check MoE LoRA params
+        kt_moe_lora = getattr(model, "_kt_moe_lora_params", {})
+        print(f"KT MoE LoRA layers: {list(kt_moe_lora.keys())}")
+
+        # Print LoRA-related parameters
+        lora_params = [(name, param.shape) for name, param in model.named_parameters() if "lora" in name.lower()]
+        print(f"\nLoRA parameters count: {len(lora_params)}")
+        if lora_params:
+            print("LoRA parameters:")
+            for name, shape in lora_params[:20]:  # Show first 20
+                print(f"  {name}: {shape}")
+            if len(lora_params) > 20:
+                print(f"  ... and {len(lora_params) - 20} more")
+
+        # Check PEFT config
+        if hasattr(model, "peft_config"):
+            print(f"\nPEFT config: {model.peft_config}")
+
+        print("=" * 60 + "\n")
+
     return model

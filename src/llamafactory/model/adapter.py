@@ -182,11 +182,67 @@ def _setup_lora_tuning(
             "token": model_args.hf_hub_token,
         }
 
-        for adapter in adapter_to_merge:
-            model: LoraModel = PeftModel.from_pretrained(model, adapter, **init_kwargs)
-            model = model.merge_and_unload()
+        # Check if KT mode is enabled (MoE weights are on CPU, cannot merge)
+        is_kt_mode = getattr(model, "_kt_wrappers", None) is not None
 
-        if len(adapter_to_merge) > 0:
+        for adapter in adapter_to_merge:
+            if is_kt_mode:
+                # In KT mode, only load Attention LoRA, skip MoE modules
+                # MoE LoRA will be loaded into KT wrappers separately
+                import json
+                import os
+                import shutil
+                import tempfile
+
+                adapter_config_path = os.path.join(adapter, "adapter_config.json")
+                with open(adapter_config_path, "r") as f:
+                    adapter_config = json.load(f)
+
+                moe_modules = {"gate_proj", "up_proj", "down_proj"}
+                original_targets = adapter_config.get("target_modules", [])
+                attention_targets = [m for m in original_targets if m not in moe_modules]
+
+                if attention_targets != original_targets:
+                    logger.info_rank0(
+                        f"KT mode: Loading only Attention LoRA. "
+                        f"Original targets: {original_targets}, Filtered: {attention_targets}"
+                    )
+
+                    # Create a temp directory with modified config (exclude MoE modules)
+                    # PeftModel.from_pretrained uses saved config, we must modify it
+                    temp_dir = tempfile.mkdtemp(prefix="kt_adapter_")
+                    try:
+                        # Symlink all files except adapter_config.json
+                        for file in os.listdir(adapter):
+                            src = os.path.join(adapter, file)
+                            dst = os.path.join(temp_dir, file)
+                            if file == "adapter_config.json":
+                                # Write modified config
+                                modified_config = adapter_config.copy()
+                                modified_config["target_modules"] = attention_targets
+                                with open(dst, "w") as f:
+                                    json.dump(modified_config, f)
+                            else:
+                                # Symlink other files
+                                os.symlink(src, dst)
+
+                        # Load from temp directory with filtered modules
+                        model = PeftModel.from_pretrained(model, temp_dir, **init_kwargs)
+                    finally:
+                        # Clean up temp directory
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+
+                    # Load MoE LoRA into KT wrappers from original adapter
+                    from .model_utils.kt_moe import load_moe_lora_from_adapter
+                    load_moe_lora_from_adapter(model, adapter)
+                else:
+                    # No MoE modules in adapter, load normally
+                    model = PeftModel.from_pretrained(model, adapter, **init_kwargs)
+            else:
+                model = PeftModel.from_pretrained(model, adapter, **init_kwargs)
+                model = model.merge_and_unload()
+
+        if len(adapter_to_merge) > 0 and not is_kt_mode:
             logger.info_rank0(f"Merged {len(adapter_to_merge)} adapter(s).")
 
         if adapter_to_resume is not None:  # resume lora training
