@@ -2,6 +2,139 @@
 
 ## Bug 记录
 
+---
+
+### BUG-010: KT SFT 训练 NaN 问题 - LoRA 指针失效 (最新)
+
+**问题描述**:
+KT SFT 训练时，AMX forward 输出全是 NaN，即使输入和 LoRA 参数值都正常。
+
+**诊断日志**: `/home/lpl/LLaMA-Factory-KT/kt_nan_diag.log`
+
+#### 尝试 1：跳过 MoE LoRA float32 upcast (失败)
+
+**假设**: PEFT 的 `_cast_lora_weights_to_float32()` 把 MoE LoRA 转成 float32，与 BF16 权重不兼容。
+
+**修复**:
+```python
+# adapter.py
+def _cast_lora_weights_to_float32(model):
+    for name, module in model.named_modules():
+        if hasattr(module, '_is_kt_moe_wrapper') and module._is_kt_moe_wrapper:
+            continue  # 跳过 KT MoE wrapper
+        # ... 原有逻辑
+```
+
+**结果**: NaN 仍存在 ❌
+
+#### 尝试 2：添加 `_apply()` 方法保护 LoRA 设备 (部分成功)
+
+**诊断日志** (2026-01-09 14:35:50):
+```
+[ERROR] LoRA param down_lora_a on cuda:0, expected CPU!
+[ERROR] NaN/Inf in AMX output!
+```
+
+**根因**: HuggingFace Trainer 调用 `model.to(device)`，PyTorch 的 `nn.Module._apply()` 把所有参数移到 CUDA，包括 LoRA 参数。AMX 是 CPU 指令集，无法读取 CUDA 张量。
+
+**修复**:
+```python
+# kt_moe.py - MOELayerWrapper
+def _apply(self, fn, recurse=True):
+    result = super()._apply(fn, recurse)
+    # 强制 LoRA 参数回 CPU
+    for k, v in self.lora_params.items():
+        if v.data.device.type != 'cpu':
+            v.data = v.data.to('cpu')
+    return result
+```
+
+**验证结果** (2026-01-09 14:54:26):
+```
+[ERROR] NaN/Inf in AMX output!
+[ERROR]   Input range: [-3.2812, 9.3750]  ← 输入正常
+[ERROR]   down_lora_a range: [-0.0094, 0.0093]  ← LoRA 值正常
+[ERROR]   (没有设备错误了！)
+```
+
+**结果**: 设备问题已修复，但 NaN 仍存在 ⚠️
+
+#### 尝试 3：在 _apply() 中更新 AMX LoRA 指针 (失败)
+
+**修复**:
+```python
+# kt_moe.py - MOELayerWrapper._apply()
+def _apply(self, fn, recurse=True):
+    result = super()._apply(fn, recurse)
+    for k, v in self.lora_params.items():
+        if v.data.device.type != 'cpu':
+            v.data = v.data.to('cpu')
+    self.update_lora_pointers()  # 在 _apply 中更新指针
+    return result
+```
+
+**验证结果** (2026-01-09 15:12:01):
+```
+[ERROR] [MOEAMXFunction.forward] NaN/Inf in AMX output!
+  Input range: [-3.2812, 9.3750]  ← 输入正常
+  down_lora_a range: [-0.0094, 0.0093]  ← LoRA 值正常
+  (没有设备错误了！)  ← _apply() 设备修复有效
+```
+
+**结果**: NaN 仍存在 ❌
+
+**分析**: `_apply()` 的调用时机不可控，可能：
+1. 被多次调用（模型加载、PEFT 包装、Trainer 初始化等）
+2. 在 `update_lora_pointers()` 之后还有其他操作导致指针失效
+
+#### 尝试 4：在 forward() 中更新指针 (待验证)
+
+**根因**: `_apply()` 调用时机不可控，只有在 `forward()` 中更新才能确保指针有效。
+
+**修复**:
+```python
+# kt_moe.py - MOELayerWrapper.forward()
+def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    # CRITICAL: 每次 forward 前更新指针
+    self.update_lora_pointers()
+
+    # ... rest of forward logic ...
+```
+
+**性能考虑**:
+- `update_lora_pointers()` 开销很小（6 次 `data_ptr()` + 1 次 submit/sync）
+- 对于 SFT 训练可以忽略不计
+
+**状态**: 待验证
+
+#### 为什么 ktransformers 单元测试没有这个问题
+
+ktransformers 测试代码 (`test_moe_sft_amx_no_tp.py`):
+- 不使用 HuggingFace Trainer
+- 直接在 CPU 上创建 LoRA 参数，手动调用 AMX forward
+- 没有任何 `.to(device)` 调用
+- 所以 LoRA 参数始终在 CPU 上，指针不会失效
+
+而 LlamaFactory 集成:
+- 使用 HuggingFace Trainer
+- Trainer 内部会调用 `model.to(device)` 或类似操作
+- 导致所有参数（包括 LoRA）被移到 CUDA，然后强制回 CPU
+- 内存地址改变，指针失效
+
+---
+
+### BUG-009: MOELayerWrapper 存储 original_moe 导致显存浪费 (已修复)
+
+**问题描述**:
+`MOELayerWrapper` 存储了 `original_moe` 引用，导致原始 MoE 层无法被垃圾回收，显存浪费。
+
+**修复**:
+移除 `self.original_moe = original_moe` 存储，不再保留原始层的引用。
+
+**状态**: ✅ 已修复
+
+---
+
 ### Bug 5: torch.multinomial 采样错误 - 训练产生 NaN (最新)
 
 **问题描述**:

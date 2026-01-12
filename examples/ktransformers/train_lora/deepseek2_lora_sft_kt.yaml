@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 
 ### dataset
-dataset: identity
+dataset: west_train
 template: deepseek
 cutoff_len: 2048
 max_samples: 100000
@@ -19,7 +19,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/lpl/ls/saves/Kllama_deepseekV2
+output_dir: /mnt/data/lpl/kernel_new_test_adapter/Kllama_deepseekV2_WEST_ALL
 logging_steps: 10
 save_steps: 500
 plot_loss: true
@@ -31,7 +31,7 @@ report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 8
 learning_rate: 1.0e-4
-num_train_epochs: 3.0
+num_train_epochs: 0.1
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true

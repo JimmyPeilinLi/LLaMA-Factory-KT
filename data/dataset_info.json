@@ -1,4 +1,7 @@
 {
+  "west_train": {
+    "file_name": "western_train.json"
+  },
   "identity": {
     "file_name": "identity.json"
   },

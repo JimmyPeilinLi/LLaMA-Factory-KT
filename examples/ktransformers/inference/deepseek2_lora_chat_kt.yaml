@@ -1,6 +1,6 @@
 ### model
 model_name_or_path: /mnt/data3/models/DeepSeek-V2-Lite-Chat
-adapter_name_or_path: /mnt/data/lpl/ls/saves/Kllama_deepseekV2
+adapter_name_or_path: /mnt/data/lpl/kernel_new_test_adapter/Kllama_deepseekV2_WEST_ALL
 template: deepseek
 trust_remote_code: true
 

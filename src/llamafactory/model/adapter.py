@@ -341,8 +341,26 @@ def _setup_lora_tuning(
             model = get_peft_model(model, peft_config)
 
     if is_trainable and cast_trainable_params_to_fp32:
+        # BUG-010 fix: Collect KT MoE LoRA parameters that must stay in bfloat16
+        # KT AMX kernel expects LoRA weights in bfloat16, upcasting to float32 causes NaN
+        kt_moe_lora_param_ids = set()
+        for name, module in model.named_modules():
+            if getattr(module, '_is_kt_moe_wrapper', False):
+                for param in module.parameters():
+                    kt_moe_lora_param_ids.add(id(param))
+
+        # Upcast trainable params except KT MoE LoRA parameters
+        upcast_count = 0
         for param in filter(lambda p: p.requires_grad, model.parameters()):
-            param.data = param.data.to(torch.float32)
+            if id(param) not in kt_moe_lora_param_ids:
+                param.data = param.data.to(torch.float32)
+                upcast_count += 1
+
+        if kt_moe_lora_param_ids:
+            logger.info_rank0(
+                f"Kept {len(kt_moe_lora_param_ids)} KT MoE LoRA parameters in bfloat16, "
+                f"upcast {upcast_count} other parameters to float32"
+            )
 
     return model
 

@@ -49,6 +49,12 @@ if TYPE_CHECKING:
 
 logger = logging.get_logger(__name__)
 
+# BUG-010 DEBUG: 全局开关控制真实数据保存
+# 设置为 True 以在 NaN 发生时保存数据用于复现
+_DEBUG_SAVE_REAL_DATA = True
+_DEBUG_DATA_SAVE_PATH = "/tmp/kt_nan_debug_data.pt"
+_DEBUG_DATA_SAVED = False  # 只保存一次
+
 # Check if kt_kernel is available
 KT_KERNEL_AVAILABLE = _u.find_spec("kt_kernel") is not None
 
@@ -392,6 +398,8 @@ class MOEAMXFunction(torch.autograd.Function):
         moe_config: MOEArchConfig,
         hidden_size: int,
         num_experts_per_tok: int,
+        layer_idx: int = -1,
+        base_weights: tuple = None,
     ) -> torch.Tensor:
         """
         Forward pass using AMX operator.
@@ -407,6 +415,8 @@ class MOEAMXFunction(torch.autograd.Function):
             moe_config: MoE architecture config
             hidden_size: Hidden dimension
             num_experts_per_tok: Number of experts per token
+            layer_idx: Layer index for debugging
+            base_weights: Tuple of (gate_proj, up_proj, down_proj) base weights
 
         Returns:
             Output tensor [batch, seq_len, hidden_size]
@@ -420,6 +430,24 @@ class MOEAMXFunction(torch.autograd.Function):
         qlen = batch_size * seq_len
         expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
         weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
+
+        # BUG-010 诊断: 检查输入数据
+        if torch.isnan(hidden_states).any() or torch.isinf(hidden_states).any():
+            logger.error(f"[MOEAMXFunction.forward] NaN/Inf in hidden_states BEFORE AMX forward!")
+            logger.error(f"  NaN count: {torch.isnan(hidden_states).sum().item()}")
+            logger.error(f"  Inf count: {torch.isinf(hidden_states).sum().item()}")
+            logger.error(f"  Range: [{hidden_states.min().item():.4f}, {hidden_states.max().item():.4f}]")
+
+        # BUG-010 诊断: 检查 routing weights
+        if torch.isnan(weights).any() or torch.isinf(weights).any():
+            logger.error(f"[MOEAMXFunction.forward] NaN/Inf in routing weights!")
+
+        # BUG-010 诊断: 检查 LoRA 参数
+        for name, param in lora_params.items():
+            if torch.isnan(param.data).any():
+                logger.error(f"[MOEAMXFunction.forward] NaN in LoRA param {name}!")
+            if param.device.type != 'cpu':
+                logger.error(f"[MOEAMXFunction.forward] LoRA param {name} on {param.device}, expected CPU!")
 
         # 2. Prepare input
         input_data = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
@@ -441,6 +469,74 @@ class MOEAMXFunction(torch.autograd.Function):
             )
         )
         cpu_infer.sync()
+
+        # BUG-010 诊断: 检查 AMX forward 输出
+        nan_mask = torch.isnan(output)
+        inf_mask = torch.isinf(output)
+        has_nan = nan_mask.any().item()
+        has_inf = inf_mask.any().item()
+
+        if has_nan or has_inf:
+            nan_count = nan_mask.sum().item()
+            inf_count = inf_mask.sum().item()
+            logger.error(f"[MOEAMXFunction.forward] NaN/Inf in AMX output!")
+            logger.error(f"  Output shape: {output.shape}, NaN count: {nan_count}, Inf count: {inf_count}")
+
+            # 找出 NaN 的位置
+            if has_nan:
+                nan_positions = torch.nonzero(nan_mask)
+                first_nan = nan_positions[0].tolist() if len(nan_positions) > 0 else None
+                # 计算哪些 token 受影响
+                nan_token_indices = nan_positions[:, 0].unique()
+                logger.error(f"  First NaN position: {first_nan} (token_idx, hidden_dim)")
+                logger.error(f"  Affected tokens: {nan_token_indices.tolist()[:20]}... (total {len(nan_token_indices)} tokens)")
+                # 检查是否所有 token 都有 NaN，或只是部分
+                if len(nan_token_indices) == qlen:
+                    logger.error(f"  ALL {qlen} tokens have NaN - likely systemic issue")
+                else:
+                    logger.error(f"  Only {len(nan_token_indices)}/{qlen} tokens have NaN - specific token/expert issue")
+                    # 打印受影响 token 选择的 experts
+                    for tok_idx in nan_token_indices[:5].tolist():
+                        experts_for_tok = expert_ids[tok_idx].tolist()
+                        logger.error(f"    Token {tok_idx} selected experts: {experts_for_tok}")
+
+            logger.error(f"  Input range: [{input_data.min().item():.4f}, {input_data.max().item():.4f}]")
+            # 打印 LoRA 权重范围，帮助诊断数值问题
+            for name, param in lora_params.items():
+                logger.error(f"  {name} range: [{param.data.min().item():.4f}, {param.data.max().item():.4f}]")
+
+            # BUG-010 DEBUG: 保存真实数据用于在 ktransformers 中复现
+            global _DEBUG_DATA_SAVED
+            if _DEBUG_SAVE_REAL_DATA and not _DEBUG_DATA_SAVED:
+                _DEBUG_DATA_SAVED = True
+                debug_data = {
+                    'layer_idx': layer_idx,
+                    'input_data': input_data.clone(),  # [qlen, hidden_size]
+                    'expert_ids': expert_ids.clone(),  # [qlen, num_experts_per_tok]
+                    'weights': weights.clone(),  # [qlen, num_experts_per_tok]
+                    'output': output.clone(),  # [qlen, hidden_size] - 包含 NaN
+                    'hidden_size': hidden_size,
+                    'num_experts_per_tok': num_experts_per_tok,
+                    'expert_num': moe_config.expert_num,
+                    'intermediate_size': moe_config.intermediate_size,
+                    # LoRA 参数
+                    'gate_lora_a': lora_params['gate_lora_a'].data.clone(),
+                    'gate_lora_b': lora_params['gate_lora_b'].data.clone(),
+                    'up_lora_a': lora_params['up_lora_a'].data.clone(),
+                    'up_lora_b': lora_params['up_lora_b'].data.clone(),
+                    'down_lora_a': lora_params['down_lora_a'].data.clone(),
+                    'down_lora_b': lora_params['down_lora_b'].data.clone(),
+                }
+                # 保存基础权重（如果提供）
+                if base_weights is not None:
+                    gate_proj, up_proj, down_proj = base_weights
+                    debug_data['gate_proj'] = gate_proj.clone()
+                    debug_data['up_proj'] = up_proj.clone()
+                    debug_data['down_proj'] = down_proj.clone()
+                    logger.info(f"[DEBUG] Base weights saved: gate_proj={gate_proj.shape}, up_proj={up_proj.shape}, down_proj={down_proj.shape}")
+
+                torch.save(debug_data, _DEBUG_DATA_SAVE_PATH)
+                logger.info(f"[DEBUG] Real data saved to {_DEBUG_DATA_SAVE_PATH} for reproduction in ktransformers")
 
         # 5. Save for backward
         ctx.moe_amx = moe_amx
@@ -503,6 +599,16 @@ class MOEAMXFunction(torch.autograd.Function):
         )
         ctx.cpu_infer.sync()
 
+        # DEBUG BUG-010: 检查 AMX backward 输出是否有 NaN
+        if torch.isnan(grad_input).any() or torch.isinf(grad_input).any():
+            logger.error("[MOEAMXFunction.backward] NaN/Inf in grad_input!")
+            logger.error(f"  grad_output NaN: {torch.isnan(grad_output_flat).any()}")
+            if not torch.isnan(grad_input).all():
+                valid_mask = ~torch.isnan(grad_input)
+                logger.error(f"  grad_input valid stats: min={grad_input[valid_mask].min():.4f}, max={grad_input[valid_mask].max():.4f}")
+            else:
+                logger.error("  grad_input is ALL NaN!")
+
         # 4. Accumulate LoRA gradients to Parameters
         # BUG-007 fix: 梯度在 CPU 上计算（AMX 需要），但 param 在 GPU 上
         # 需要将梯度移动到 param 所在的设备
@@ -525,8 +631,8 @@ class MOEAMXFunction(torch.autograd.Function):
         grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
 
         # Return None for non-Tensor inputs
-        # forward args: hidden_states, topk_ids, topk_weights, moe_amx, cpu_infer, lora_params, moe_config, hidden_size, num_experts_per_tok
-        return grad_input, None, None, None, None, None, None, None, None
+        # forward args: hidden_states, topk_ids, topk_weights, moe_amx, cpu_infer, lora_params, moe_config, hidden_size, num_experts_per_tok, layer_idx, base_weights
+        return grad_input, None, None, None, None, None, None, None, None, None, None
 
 
 # =============================================================================
@@ -564,7 +670,17 @@ class MOELayerWrapper(nn.Module):
             layer_idx: Layer index
         """
         super().__init__()
-        self.original_moe = original_moe
+        # NOTE: Do NOT store original_moe as self.original_moe!
+        # PEFT's get_peft_model() uses named_modules() to find Linear layers.
+        # If we store original_moe, PEFT will find original_moe.experts.N.{gate,up,down}_proj
+        # which have empty weights (cleared by _clear_original_expert_weights).
+        # This causes NaN during training.
+        # We only need router and shared_experts, which are stored separately below.
+
+        # Marker for adapter.py to identify KT MoE wrappers
+        # Used to skip float32 upcast for LoRA parameters (BUG-010 fix)
+        self._is_kt_moe_wrapper = True
+
         self.moe_amx = moe_amx
         self.cpu_infer = cpu_infer
         self.moe_config = moe_config
@@ -584,6 +700,45 @@ class MOELayerWrapper(nn.Module):
         else:
             self.shared_experts = None
 
+    def _apply(self, fn, recurse=True):
+        """
+        Override _apply to prevent LoRA parameters from moving to CUDA
+        and update AMX operator with new LoRA weight pointers.
+
+        AMX kernel requires LoRA weights on CPU. Standard _apply would move
+        all parameters to CUDA when model.to(device) is called by Trainer.
+
+        BUG-010 fix: When HuggingFace Trainer calls model.to(device), PyTorch's
+        nn.Module._apply() recursively moves all parameters to the target device.
+        This has two problems:
+        1. LoRA params move to CUDA, but AMX kernel can only read CPU tensors
+        2. Even after moving back to CPU, the memory address changes
+
+        This override:
+        1. Forces LoRA params back to CPU
+        2. Updates AMX operator with new LoRA weight pointers
+
+        Args:
+            fn: Function to apply to tensors (e.g., lambda t: t.cuda())
+            recurse: Whether to recurse into child modules
+
+        Returns:
+            self
+        """
+        # Apply to all other components normally (router, shared_experts, etc.)
+        result = super()._apply(fn, recurse)
+
+        # Force LoRA params back to CPU (they may have been moved to CUDA)
+        for k, v in self.lora_params.items():
+            if v.data.device.type != 'cpu':
+                v.data = v.data.to('cpu')
+
+        # CRITICAL: Update AMX operator with new LoRA weight pointers
+        # The memory address may have changed after _apply
+        self.update_lora_pointers()
+
+        return result
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
         Forward pass using AMX acceleration.
@@ -594,6 +749,11 @@ class MOELayerWrapper(nn.Module):
         Returns:
             Output tensor [batch, seq_len, hidden_size]
         """
+        # CRITICAL BUG-010 fix: Update LoRA pointers before every forward
+        # This ensures AMX always has valid pointers, regardless of when
+        # _apply() was called or if memory was reallocated by PyTorch/PEFT
+        self.update_lora_pointers()
+
         batch_size, seq_len, _ = hidden_states.shape
 
         # Get topk_ids and topk_weights based on router type
@@ -611,6 +771,8 @@ class MOELayerWrapper(nn.Module):
             topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
         # Apply AMX forward with unified interface
+        # 传递 base_weights 用于 NaN 调试时保存
+        base_weights = getattr(self, '_base_weights', None)
         moe_output = MOEAMXFunction.apply(
             hidden_states,
             topk_ids,
@@ -621,11 +783,20 @@ class MOELayerWrapper(nn.Module):
             self.moe_config,
             self.hidden_size,
             self.moe_config.num_experts_per_tok,
+            self.layer_idx,
+            base_weights,
         )
+
+        # DEBUG BUG-010: 检查 moe_output 是否有 NaN
+        if torch.isnan(moe_output).any():
+            logger.error(f"[Layer {self.layer_idx}] NaN in moe_output (from AMX)!")
 
         # Handle shared experts if present
         if self.shared_experts is not None:
             shared_output = self.shared_experts(hidden_states)
+            # DEBUG BUG-010: 检查 shared_output 是否有 NaN
+            if torch.isnan(shared_output).any():
+                logger.error(f"[Layer {self.layer_idx}] NaN in shared_experts output!")
             moe_output = moe_output + shared_output
 
         return moe_output
