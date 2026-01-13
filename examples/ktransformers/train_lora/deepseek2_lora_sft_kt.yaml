@@ -19,7 +19,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/lpl/kernel_new_test_adapter/Kllama_deepseekV2_WEST_ALL
+output_dir: /mnt/data/lpl/kernel_new_test_adapter/Kllama2_deepseekV2_WEST_ALL
 logging_steps: 10
 save_steps: 500
 plot_loss: true

@@ -400,6 +400,7 @@ class MOEAMXFunction(torch.autograd.Function):
         num_experts_per_tok: int,
         layer_idx: int = -1,
         base_weights: tuple = None,
+        training: bool = True,
     ) -> torch.Tensor:
         """
         Forward pass using AMX operator.
@@ -417,6 +418,7 @@ class MOEAMXFunction(torch.autograd.Function):
             num_experts_per_tok: Number of experts per token
             layer_idx: Layer index for debugging
             base_weights: Tuple of (gate_proj, up_proj, down_proj) base weights
+            training: Whether in training mode (save_for_backward=True) or inference (False)
 
         Returns:
             Output tensor [batch, seq_len, hidden_size]
@@ -457,6 +459,7 @@ class MOEAMXFunction(torch.autograd.Function):
         bsz_tensor = torch.tensor([qlen], device="cpu")
 
         # 4. Call AMX forward
+        # save_for_backward: True during training (need backward), False during inference
         cpu_infer.submit(
             moe_amx.forward_sft_task(
                 bsz_tensor.data_ptr(),
@@ -465,7 +468,7 @@ class MOEAMXFunction(torch.autograd.Function):
                 weights.data_ptr(),
                 input_data.data_ptr(),
                 output.data_ptr(),
-                True,  # save_for_backward
+                training,  # save_for_backward: only save cache when training
             )
         )
         cpu_infer.sync()
@@ -631,8 +634,8 @@ class MOEAMXFunction(torch.autograd.Function):
         grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
 
         # Return None for non-Tensor inputs
-        # forward args: hidden_states, topk_ids, topk_weights, moe_amx, cpu_infer, lora_params, moe_config, hidden_size, num_experts_per_tok, layer_idx, base_weights
-        return grad_input, None, None, None, None, None, None, None, None, None, None
+        # forward args: hidden_states, topk_ids, topk_weights, moe_amx, cpu_infer, lora_params, moe_config, hidden_size, num_experts_per_tok, layer_idx, base_weights, training
+        return grad_input, None, None, None, None, None, None, None, None, None, None, None
 
 
 # =============================================================================
@@ -758,8 +761,14 @@ class MOELayerWrapper(nn.Module):
 
         # Get topk_ids and topk_weights based on router type
         if self.router_type == "deepseek_gate":
-            # DeepSeek router expects 3D input and returns (topk_idx, topk_weight, aux_loss)
-            topk_ids, topk_weights, aux_loss = self.router(hidden_states)
+            # DeepSeek router expects 3D input
+            # Newer transformers returns (topk_idx, topk_weight)
+            # Older versions may return (topk_idx, topk_weight, aux_loss)
+            router_output = self.router(hidden_states)
+            if len(router_output) == 2:
+                topk_ids, topk_weights = router_output
+            else:
+                topk_ids, topk_weights, _ = router_output  # Ignore aux_loss during inference
         else:
             # Qwen/Mixtral router is nn.Linear, expects 2D input, returns raw logits
             router_logits = self.router(hidden_states.view(-1, self.hidden_size))
@@ -772,6 +781,7 @@ class MOELayerWrapper(nn.Module):
 
         # Apply AMX forward with unified interface
         # 传递 base_weights 用于 NaN 调试时保存
+        # 传递 self.training 控制 save_for_backward (推理时不需要保存 cache)
         base_weights = getattr(self, '_base_weights', None)
         moe_output = MOEAMXFunction.apply(
             hidden_states,
@@ -785,6 +795,7 @@ class MOELayerWrapper(nn.Module):
             self.moe_config.num_experts_per_tok,
             self.layer_idx,
             base_weights,
+            self.training,  # save_for_backward: only save cache when training
         )
 
         # DEBUG BUG-010: 检查 moe_output 是否有 NaN
@@ -1096,14 +1107,25 @@ def get_kt_lora_params(model: "PreTrainedModel") -> list[nn.Parameter]:
     Get all MoE LoRA parameters from KT AMX model.
 
     Args:
-        model: Model with KT AMX wrappers
+        model: Model with KT AMX wrappers (can be wrapped by PeftModel)
 
     Returns:
         List of LoRA parameters
     """
     params = []
-    if hasattr(model, "_kt_wrappers"):
-        for wrapper in model._kt_wrappers:
+    # Handle PeftModel wrapping - try to find _kt_wrappers on base model
+    wrappers = getattr(model, "_kt_wrappers", None)
+    if wrappers is None:
+        base_model = model
+        for attr in ["base_model", "model"]:
+            if hasattr(base_model, attr):
+                base_model = getattr(base_model, attr)
+                wrappers = getattr(base_model, "_kt_wrappers", None)
+                if wrappers:
+                    break
+
+    if wrappers:
+        for wrapper in wrappers:
             params.extend(wrapper.lora_params.values())
     return params
 
@@ -1115,10 +1137,21 @@ def update_kt_lora_pointers(model: "PreTrainedModel"):
     Must be called after optimizer.step() in TP mode.
 
     Args:
-        model: Model with KT AMX wrappers
+        model: Model with KT AMX wrappers (can be wrapped by PeftModel)
     """
-    if hasattr(model, "_kt_wrappers"):
-        for wrapper in model._kt_wrappers:
+    # Handle PeftModel wrapping - try to find _kt_wrappers on base model
+    wrappers = getattr(model, "_kt_wrappers", None)
+    if wrappers is None:
+        base_model = model
+        for attr in ["base_model", "model"]:
+            if hasattr(base_model, attr):
+                base_model = getattr(base_model, attr)
+                wrappers = getattr(base_model, "_kt_wrappers", None)
+                if wrappers:
+                    break
+
+    if wrappers:
+        for wrapper in wrappers:
             wrapper.update_lora_pointers()
 
 
@@ -1141,7 +1174,19 @@ def load_moe_lora_from_adapter(model: "PreTrainedModel", adapter_path: str):
     import re
     from safetensors import safe_open
 
+    # After PeftModel.from_pretrained(), _kt_wrappers is on the inner model
+    # We need to unwrap to find it
     wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        # Try to find wrappers on the base model (for PeftModel case)
+        base_model = model
+        for attr in ["base_model", "model"]:
+            if hasattr(base_model, attr):
+                base_model = getattr(base_model, attr)
+                wrappers = getattr(base_model, "_kt_wrappers", [])
+                if wrappers:
+                    logger.info(f"Found _kt_wrappers on unwrapped model ({attr})")
+                    break
     if not wrappers:
         logger.warning("No KT wrappers found, skipping MoE LoRA loading")
         return
@@ -1160,17 +1205,37 @@ def load_moe_lora_from_adapter(model: "PreTrainedModel", adapter_path: str):
     logger.info(f"Loading MoE LoRA from {adapter_file}")
 
     # Parse MoE LoRA weights from adapter
-    # Key pattern: base_model.model.model.layers.{layer}.mlp.original_moe.experts.{expert}.{proj}.lora_{A/B}.weight
-    moe_pattern = re.compile(
+    # Two key formats are supported:
+    #
+    # 1. KT-trained adapter format (original_moe.experts):
+    #    base_model.model.model.layers.{layer}.mlp.original_moe.experts.{expert}.{proj}.lora_{A/B}.weight
+    #
+    # 2. Non-KT (standard PEFT) adapter format (experts with .default):
+    #    base_model.model.model.layers.{layer}.mlp.experts.{expert}.{proj}.lora_{A/B}.default.weight
+    #
+    moe_pattern_kt = re.compile(
         r"base_model\.model\.model\.layers\.(\d+)\.mlp\.original_moe\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.lora_(A|B)\.weight"
+    )
+    moe_pattern_peft = re.compile(
+        r"base_model\.model\.model\.layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.lora_(A|B)\.weight"
     )
 
     # Group weights by layer
     layer_weights = {}  # layer_idx -> {expert_idx -> {proj -> {A/B: tensor}}}
+    matched_kt_format = 0
+    matched_peft_format = 0
 
     with safe_open(adapter_file, framework="pt") as f:
         for key in f.keys():
-            match = moe_pattern.match(key)
+            # Try KT format first
+            match = moe_pattern_kt.match(key)
+            if match:
+                matched_kt_format += 1
+            else:
+                # Try non-KT PEFT format
+                match = moe_pattern_peft.match(key)
+                if match:
+                    matched_peft_format += 1
             if match:
                 layer_idx = int(match.group(1))
                 expert_idx = int(match.group(2))
@@ -1252,4 +1317,96 @@ def load_moe_lora_from_adapter(model: "PreTrainedModel", adapter_path: str):
     # Update AMX operator pointers
     update_kt_lora_pointers(model)
 
-    logger.info(f"Loaded MoE LoRA into {loaded_count} KT wrappers from {adapter_path}")
+    logger.info(
+        f"Loaded MoE LoRA into {loaded_count} KT wrappers from {adapter_path} "
+        f"(matched {matched_kt_format} KT-format keys, {matched_peft_format} PEFT-format keys)"
+    )
+
+
+def save_moe_lora_to_adapter(model: "PreTrainedModel", output_dir: str) -> None:
+    """
+    Save MoE LoRA weights to adapter file by merging with existing Attention LoRA.
+
+    This function:
+    1. Reads existing adapter_model.safetensors (contains Attention LoRA from PEFT)
+    2. Converts KT MoE LoRA format to PEFT format
+    3. Merges and writes back to adapter_model.safetensors
+
+    Args:
+        model: Model with KT wrappers containing MoE LoRA parameters
+        output_dir: Directory containing the adapter file
+
+    Key format conversion:
+        KT format:   [num_experts, lora_rank, features] (batched)
+        PEFT format: [lora_rank, features] per expert (unbatched)
+
+    PEFT key pattern:
+        base_model.model.model.layers.{layer}.mlp.original_moe.experts.{expert}.{proj}.lora_{A/B}.weight
+    """
+    import os
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    # Get KT wrappers
+    wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        logger.warning("No KT wrappers found, skipping MoE LoRA saving")
+        return
+
+    # Read existing adapter file (Attention LoRA)
+    adapter_file = os.path.join(output_dir, "adapter_model.safetensors")
+    if not os.path.exists(adapter_file):
+        adapter_file_bin = os.path.join(output_dir, "adapter_model.bin")
+        if os.path.exists(adapter_file_bin):
+            # Load from .bin file
+            state_dict = torch.load(adapter_file_bin, map_location="cpu", weights_only=True)
+        else:
+            # No existing adapter, create empty state_dict
+            logger.warning(f"No existing adapter file found at {output_dir}, creating new one")
+            state_dict = {}
+    else:
+        # Load from safetensors
+        state_dict = {}
+        with safe_open(adapter_file, framework="pt") as f:
+            for key in f.keys():
+                state_dict[key] = f.get_tensor(key)
+
+    # Convert and add MoE LoRA weights
+    moe_lora_count = 0
+    for wrapper in wrappers:
+        layer_idx = wrapper.layer_idx
+        num_experts = wrapper.moe_config.expert_num
+
+        # Get KT format tensors (already on CPU as bfloat16)
+        gate_lora_a = wrapper.lora_params["gate_lora_a"].data.cpu()  # [E, r, H]
+        gate_lora_b = wrapper.lora_params["gate_lora_b"].data.cpu()  # [E, I, r]
+        up_lora_a = wrapper.lora_params["up_lora_a"].data.cpu()      # [E, r, H]
+        up_lora_b = wrapper.lora_params["up_lora_b"].data.cpu()      # [E, I, r]
+        down_lora_a = wrapper.lora_params["down_lora_a"].data.cpu()  # [E, r, I]
+        down_lora_b = wrapper.lora_params["down_lora_b"].data.cpu()  # [E, H, r]
+
+        # Convert to PEFT format (per-expert)
+        for expert_idx in range(num_experts):
+            base_key = f"base_model.model.model.layers.{layer_idx}.mlp.original_moe.experts.{expert_idx}"
+
+            # Each expert's LoRA weights: [lora_rank, features] or [features, lora_rank]
+            state_dict[f"{base_key}.gate_proj.lora_A.weight"] = gate_lora_a[expert_idx].clone()
+            state_dict[f"{base_key}.gate_proj.lora_B.weight"] = gate_lora_b[expert_idx].clone()
+            state_dict[f"{base_key}.up_proj.lora_A.weight"] = up_lora_a[expert_idx].clone()
+            state_dict[f"{base_key}.up_proj.lora_B.weight"] = up_lora_b[expert_idx].clone()
+            state_dict[f"{base_key}.down_proj.lora_A.weight"] = down_lora_a[expert_idx].clone()
+            state_dict[f"{base_key}.down_proj.lora_B.weight"] = down_lora_b[expert_idx].clone()
+
+            moe_lora_count += 6  # 6 tensors per expert
+
+        logger.debug(f"Added MoE LoRA for layer {layer_idx} ({num_experts} experts)")
+
+    # Save merged state_dict
+    output_file = os.path.join(output_dir, "adapter_model.safetensors")
+    save_file(state_dict, output_file, metadata={"format": "pt"})
+
+    logger.info(
+        f"Saved MoE LoRA to {output_file}: "
+        f"{len(wrappers)} layers, {moe_lora_count} MoE LoRA tensors added, "
+        f"{len(state_dict)} total tensors"
+    )

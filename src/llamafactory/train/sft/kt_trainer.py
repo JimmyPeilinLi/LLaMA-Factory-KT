@@ -388,6 +388,31 @@ class KTrainer(CustomSeq2SeqTrainer):
         self._update_lora_pointers()
         return super()._maybe_log_save_evaluate(tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=learning_rate)
 
+    @override
+    def save_model(self, output_dir: Optional[str] = None, _internal_call: bool = False):
+        """
+        Save model with both Attention LoRA (PEFT) and MoE LoRA (KT).
+
+        This method:
+        1. Calls parent's save_model() to save Attention LoRA via PEFT
+        2. Merges MoE LoRA weights into the adapter file
+
+        Args:
+            output_dir: Directory to save the model. Uses args.output_dir if None.
+            _internal_call: Internal flag from HuggingFace trainer
+        """
+        # 1. Call parent to save Attention LoRA via PEFT
+        super().save_model(output_dir, _internal_call)
+
+        # 2. Merge MoE LoRA into the adapter file
+        if output_dir is None:
+            output_dir = self.args.output_dir
+
+        if self._kt_wrappers:
+            from ...model.model_utils.kt_moe import save_moe_lora_to_adapter
+            save_moe_lora_to_adapter(self.model, output_dir)
+            logger.info_rank0(f"Saved MoE LoRA to {output_dir}")
+
 
 class KTAMXOptimizerCallback:
     """

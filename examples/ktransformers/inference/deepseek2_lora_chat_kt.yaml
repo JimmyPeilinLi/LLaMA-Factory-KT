@@ -1,14 +1,8 @@
 ### model
 model_name_or_path: /mnt/data3/models/DeepSeek-V2-Lite-Chat
-adapter_name_or_path: /mnt/data/lpl/kernel_new_test_adapter/Kllama_deepseekV2_WEST_ALL
+adapter_name_or_path: /mnt/data/lpl/kernel_new_test_adapter/NoKT_deepseekV2_WEST_ALL/checkpoint-133_converted
 template: deepseek
 trust_remote_code: true
 
 ### inference backend
 infer_backend: huggingface
-
-### ktransformers
-use_kt: true
-kt_backend: AMXBF16
-kt_num_threads: 60
-kt_tp_enabled: false
