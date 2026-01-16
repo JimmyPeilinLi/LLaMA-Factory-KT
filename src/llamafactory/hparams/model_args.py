@@ -490,6 +490,13 @@ class KTransformersArguments:
         default=True,
         metadata={"help": "Enable Tensor Parallelism across NUMA nodes."},
     )
+    kt_threadpool_count: int = field(
+        default=4,
+        metadata={
+            "help": "Number of NUMA subpools for Tensor Parallelism. "
+            "Only used when kt_tp_enabled=True. Typically equals the number of NUMA nodes."
+        },
+    )
     kt_max_cache_depth: int = field(
         default=1,
         metadata={

@@ -38,13 +38,14 @@ bf16: true
 ddp_timeout: 180000000
 resume_from_checkpoint: null
 
-### ktransformers
+### ktransformers (使用 KTMoEWrapper 统一接口)
 use_kt: true                    # 启用 KTransformers MoE 后端
-kt_backend: AMXBF16             # AMX 后端类型: AMXBF16 或 AMXInt8
+kt_backend: AMXBF16             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
 kt_num_threads: 60              # CPU 线程数
 kt_tp_enabled: true             # 启用 NUMA 张量并行
-kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU, Phase 2 功能)
-# kt_weight_path: null          # 预处理权重路径 (可选，用于 INT4/INT8)
+kt_threadpool_count: 4          # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效)
+kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU)
+# kt_weight_path: null          # 预处理权重路径 (可选)
 
 ### eval
 # eval_dataset: alpaca_en_demo

@@ -19,7 +19,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/lpl/kernel_new_test_adapter/Kllama2_deepseekV2_WEST_ALL
+output_dir: /mnt/data/lpl/kernel_new_test_adapter/Kllama_test_deepseekV2_WEST_ALL
 logging_steps: 10
 save_steps: 500
 plot_loss: true
@@ -39,14 +39,15 @@ ddp_timeout: 180000000
 disable_gradient_checkpointing: true
 resume_from_checkpoint: null
 
-### ktransformers
+### ktransformers (使用 KTMoEWrapper 统一接口)
 use_kt: true                    # 启用 KTransformers MoE 后端
-kt_backend: AMXBF16            # AMX 后端类型: AMXBF16 或 AMXInt8
+kt_backend: AMXBF16             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
 kt_num_threads: 60              # CPU 线程数
-kt_tp_enabled: false             # 启用 NUMA 张量并行
-kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU, Phase 2 功能)
+kt_tp_enabled: false            # 启用 NUMA 张量并行
+# kt_threadpool_count: 4        # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效，默认=4)
+kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU)
 kt_moe_lora_device: gpu         # MoE LoRA 参数位置: gpu (推荐) 或 cpu (暂不支持)
-# kt_weight_path: /mnt/data3/models/DeepSeek-V2-Lite-INT8          # 预处理权重路径 (可选，用于 INT4/INT8)
+# kt_weight_path: /mnt/data3/models/DeepSeek-V2-Lite-INT8  # 预处理权重路径 (可选)
 
 ### eval
 # eval_dataset: alpaca_en_demo
