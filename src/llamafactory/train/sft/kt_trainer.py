@@ -101,9 +101,6 @@ class KTrainer(CustomSeq2SeqTrainer):
         # Disable cache for training
         self.model.config.use_cache = False
 
-        # BUG-010: Register NaN diagnostic hooks to trace NaN source
-        self._register_nan_diagnostic_hooks()
-
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
         """
@@ -238,11 +235,6 @@ class KTrainer(CustomSeq2SeqTrainer):
         """
         loss = super().training_step(model, inputs, num_items_in_batch)
 
-        # DEBUG BUG-010: 检查 loss 和梯度是否有 NaN
-        if torch.isnan(loss):
-            logger.error("[KTrainer.training_step] NaN loss detected!")
-            self._log_nan_gradients()
-
         # In TP mode, update LoRA weight pointers after gradient is computed
         # Note: The actual pointer update happens after optimizer.step() in _inner_training_loop
         # This is handled by the callback below
@@ -259,128 +251,6 @@ class KTrainer(CustomSeq2SeqTrainer):
         if self._kt_tp_enabled and self._kt_wrappers:
             from ...model.model_utils.kt_moe import update_kt_lora_pointers
             update_kt_lora_pointers(self.model)
-
-    def _log_nan_gradients(self):
-        """DEBUG BUG-010: Log parameters with NaN gradients."""
-        nan_params = []
-        for name, param in self.model.named_parameters():
-            if param.grad is not None and torch.isnan(param.grad).any():
-                nan_count = torch.isnan(param.grad).sum().item()
-                nan_params.append((name, nan_count))
-
-        if nan_params:
-            logger.error(f"[KTrainer] NaN gradients in {len(nan_params)} params:")
-            # Sort by NaN count descending
-            for name, count in sorted(nan_params, key=lambda x: -x[1])[:20]:
-                logger.error(f"  {name}: {count} NaN values")
-        else:
-            logger.error("[KTrainer] No NaN gradients found in parameters")
-
-    def _register_nan_diagnostic_hooks(self):
-        """
-        BUG-010: Register forward hooks to trace where NaN is introduced.
-
-        Based on log analysis, NaN is introduced BETWEEN Layer 1 MoE output
-        and Layer 2 MoE input. This method adds hooks to detect NaN in:
-        - Attention layers
-        - LayerNorm layers
-        - MoE layers (both input and output)
-        """
-        # Get base model - handle peft wrapping
-        def get_transformer_layers(model):
-            """Unwrap peft/other wrappers to get transformer layers."""
-            # Try peft wrapping: PeftModel -> LoraModel -> base model
-            if hasattr(model, 'base_model') and hasattr(model.base_model, 'model'):
-                base = model.base_model.model
-            else:
-                base = model
-
-            # Try different model structures
-            if hasattr(base, 'model') and hasattr(base.model, 'layers'):
-                return base.model.layers
-            elif hasattr(base, 'layers'):
-                return base.layers
-            return None
-
-        layers = get_transformer_layers(self.model)
-        if layers is None:
-            logger.warning("[NaN Diagnostic] Model structure not recognized, skipping hook registration")
-            return
-
-        self._nan_hook_handles = []
-        self._nan_detection_enabled = True
-        self._nan_first_occurrence = {}  # Track first occurrence per layer
-
-        def make_nan_hook(layer_idx: int, component_name: str):
-            """Create a hook that detects NaN in forward output."""
-            def hook(module, input, output):
-                if not self._nan_detection_enabled:
-                    return
-
-                # Safely extract tensor from output (handle tuple, empty tuple, tensor)
-                def get_tensor(x):
-                    if isinstance(x, tuple) and len(x) > 0:
-                        return x[0]
-                    elif torch.is_tensor(x):
-                        return x
-                    return None
-
-                out_tensor = get_tensor(output)
-
-                if out_tensor is not None and torch.is_tensor(out_tensor):
-                    has_nan = torch.isnan(out_tensor).any().item()
-                    has_inf = torch.isinf(out_tensor).any().item()
-
-                    if has_nan or has_inf:
-                        key = f"Layer{layer_idx}.{component_name}"
-                        if key not in self._nan_first_occurrence:
-                            self._nan_first_occurrence[key] = True
-                            # Get input info safely
-                            inp = get_tensor(input)
-                            if inp is not None and torch.is_tensor(inp):
-                                inp_has_nan = torch.isnan(inp).any().item()
-                                inp_has_inf = torch.isinf(inp).any().item()
-                                inp_range = f"[{inp.min().item():.4f}, {inp.max().item():.4f}]"
-                            else:
-                                inp_has_nan = False
-                                inp_has_inf = False
-                                inp_range = "N/A"
-
-                            logger.error(
-                                f"[NaN TRACE] {key}: "
-                                f"output NaN={has_nan}, Inf={has_inf}, "
-                                f"input NaN={inp_has_nan}, Inf={inp_has_inf}, "
-                                f"input_range={inp_range}"
-                            )
-
-                            # If input is clean but output has NaN, this is the source!
-                            if (has_nan or has_inf) and not inp_has_nan and not inp_has_inf:
-                                logger.error(f"  >>> NaN SOURCE FOUND: {key} <<<")
-            return hook
-
-        # Register hooks for each transformer layer
-        for i, layer in enumerate(layers):
-            # Hook for attention
-            if hasattr(layer, 'self_attn'):
-                handle = layer.self_attn.register_forward_hook(make_nan_hook(i, "Attention"))
-                self._nan_hook_handles.append(handle)
-
-            # Hook for input layernorm (before attention)
-            if hasattr(layer, 'input_layernorm'):
-                handle = layer.input_layernorm.register_forward_hook(make_nan_hook(i, "InputLN"))
-                self._nan_hook_handles.append(handle)
-
-            # Hook for post-attention layernorm (before MoE)
-            if hasattr(layer, 'post_attention_layernorm'):
-                handle = layer.post_attention_layernorm.register_forward_hook(make_nan_hook(i, "PostAttnLN"))
-                self._nan_hook_handles.append(handle)
-
-            # Hook for MLP/MoE if it exists
-            if hasattr(layer, 'mlp'):
-                handle = layer.mlp.register_forward_hook(make_nan_hook(i, "MLP"))
-                self._nan_hook_handles.append(handle)
-
-        logger.info_rank0(f"[NaN Diagnostic] Registered {len(self._nan_hook_handles)} hooks for NaN detection")
 
     def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=None):
         """Override to update LoRA pointers before evaluation."""
