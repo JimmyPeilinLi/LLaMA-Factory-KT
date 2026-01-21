@@ -333,8 +333,192 @@ def create_lora_params(
 
 
 # =============================================================================
+# LoRA Experts Modules
+# =============================================================================
+
+
+class LoRAExpertMLP(nn.Module):
+    """
+    Single LoRA Expert with SwiGLU activation structure.
+
+    This module mimics the structure of shared experts in MoE models,
+    using SwiGLU (gate * silu(up)) -> down pattern.
+
+    Initialization:
+    - gate_proj and up_proj: Kaiming uniform initialization
+    - down_proj: Zero initialization (ensures output = 0 at training start)
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        device: str = "cuda",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
+        """
+        Initialize LoRA Expert MLP.
+
+        Args:
+            hidden_size: Model hidden dimension
+            intermediate_size: MLP intermediate dimension (e.g., 1024)
+            device: Device to place parameters on
+            dtype: Data type for parameters
+        """
+        super().__init__()
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False, device=device, dtype=dtype)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False, device=device, dtype=dtype)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False, device=device, dtype=dtype)
+        self.act_fn = nn.SiLU()
+
+        # Zero initialize down_proj to ensure output = 0 at training start
+        nn.init.zeros_(self.down_proj.weight)
+        # Kaiming initialization for gate and up projections
+        nn.init.kaiming_uniform_(self.gate_proj.weight, a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.up_proj.weight, a=math.sqrt(5))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass with SwiGLU activation.
+
+        Args:
+            x: Input tensor [batch, seq_len, hidden_size]
+
+        Returns:
+            Output tensor [batch, seq_len, hidden_size]
+        """
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+
+
+class LoRAExperts(nn.Module):
+    """
+    LoRA Experts module containing multiple LoRA Expert MLPs.
+
+    Unlike routed experts, LoRA Experts process ALL tokens (no routing).
+    The outputs from all experts are summed and averaged.
+
+    This design:
+    - Provides trainable capacity similar to shared experts
+    - Works with frozen routed experts (CPU AMX)
+    - Runs entirely on GPU for efficient training
+    """
+
+    def __init__(
+        self,
+        num_experts: int,
+        hidden_size: int,
+        intermediate_size: int,
+        device: str = "cuda",
+        dtype: torch.dtype = torch.bfloat16,
+    ):
+        """
+        Initialize LoRA Experts module.
+
+        Args:
+            num_experts: Number of LoRA Experts
+            hidden_size: Model hidden dimension
+            intermediate_size: MLP intermediate dimension
+            device: Device to place parameters on
+            dtype: Data type for parameters
+        """
+        super().__init__()
+        self.experts = nn.ModuleList([
+            LoRAExpertMLP(hidden_size, intermediate_size, device, dtype)
+            for _ in range(num_experts)
+        ])
+        self.num_experts = num_experts
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through all LoRA Experts.
+
+        All experts process all tokens, and outputs are averaged.
+
+        Args:
+            hidden_states: Input tensor [batch, seq_len, hidden_size]
+
+        Returns:
+            Output tensor [batch, seq_len, hidden_size]
+        """
+        output = torch.zeros_like(hidden_states)
+        for expert in self.experts:
+            output = output + expert(hidden_states)
+        return output / self.num_experts
+
+
+# =============================================================================
 # KTMoE Autograd Function
 # =============================================================================
+
+
+class KTMoEFrozenFunction(torch.autograd.Function):
+    """
+    Custom autograd function for KTMoEWrapper forward with frozen experts (LoRA Experts mode).
+
+    This function:
+    - Computes forward pass through routed experts (with dummy LoRA)
+    - Computes backward to propagate gradients to hidden_states
+    - Does NOT update any LoRA gradients (they are frozen)
+    """
+
+    @staticmethod
+    def forward(
+        ctx,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+        wrapper: Any,
+        hidden_size: int,
+        num_experts_per_tok: int,
+        layer_idx: int = -1,
+    ) -> torch.Tensor:
+        """Forward pass with frozen experts."""
+        original_device = hidden_states.device
+        original_dtype = hidden_states.dtype
+        batch_size, seq_len, _ = hidden_states.shape
+
+        qlen = batch_size * seq_len
+        input_flat = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
+        expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
+        weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
+
+        # Forward with save_for_backward=True to enable gradient propagation
+        output = wrapper.forward_sft(
+            hidden_states=input_flat,
+            expert_ids=expert_ids,
+            weights=weights,
+            save_for_backward=True,  # Need this for backward gradient computation
+        )
+
+        ctx.wrapper = wrapper
+        ctx.hidden_size = hidden_size
+        ctx.qlen = qlen
+        ctx.batch_size = batch_size
+        ctx.seq_len = seq_len
+        ctx.original_device = original_device
+        ctx.original_dtype = original_dtype
+
+        output = output.view(batch_size, seq_len, hidden_size)
+        return output.to(device=original_device, dtype=original_dtype)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        """Backward pass - compute grad_hidden_states but ignore LoRA gradients."""
+        qlen = ctx.qlen
+        hidden_size = ctx.hidden_size
+
+        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
+
+        # Call wrapper's backward to get grad_input
+        # The grad_loras will be computed but we ignore them (frozen)
+        grad_input, _ = ctx.wrapper.backward(grad_output_flat)
+
+        grad_input = grad_input.view(ctx.batch_size, ctx.seq_len, hidden_size)
+        grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
+
+        # Return None for non-Tensor inputs
+        # forward args: hidden_states, topk_ids, topk_weights, wrapper, hidden_size, num_experts_per_tok, layer_idx
+        return grad_input, None, None, None, None, None, None
 
 
 class KTMoEFunction(torch.autograd.Function):
@@ -465,16 +649,21 @@ class KTMoELayerWrapper(nn.Module):
 
     This replaces the original MoE layer's forward method with KTMoEWrapper implementation.
     Uses the unified KTMoEWrapper factory interface for SFT operations.
+
+    Supports two modes:
+    1. Per-expert LoRA mode: Each routed expert has its own LoRA parameters
+    2. LoRA Experts mode: Separate trainable MLP modules that process all tokens
     """
 
     def __init__(
         self,
         original_moe: nn.Module,
         wrapper: Any,  # BaseSFTMoEWrapper instance
-        lora_params: dict[str, nn.Parameter],
+        lora_params: dict[str, nn.Parameter] | None,
         moe_config: MOEArchConfig,
         hidden_size: int,
         layer_idx: int,
+        lora_experts: "LoRAExperts | None" = None,
     ):
         """
         Initialize KTMoE layer wrapper.
@@ -482,10 +671,11 @@ class KTMoELayerWrapper(nn.Module):
         Args:
             original_moe: Original MoE module (kept for router access)
             wrapper: BaseSFTMoEWrapper instance from KTMoEWrapper
-            lora_params: LoRA parameter dictionary
+            lora_params: LoRA parameter dictionary (None if using LoRA Experts mode)
             moe_config: MoE architecture configuration
             hidden_size: Hidden dimension
             layer_idx: Layer index
+            lora_experts: LoRA Experts module (None if using per-expert LoRA mode)
         """
         super().__init__()
         # NOTE: Do NOT store original_moe as self.original_moe!
@@ -504,8 +694,19 @@ class KTMoELayerWrapper(nn.Module):
         self.layer_idx = layer_idx
         self.router_type = moe_config.router_type  # "linear" or "deepseek_gate"
 
-        # Store LoRA params as module parameters for optimizer
-        self.lora_params = nn.ParameterDict(lora_params)
+        # LoRA Experts mode vs per-expert LoRA mode
+        self.lora_experts = lora_experts
+
+        # Store LoRA params
+        if lora_experts is not None:
+            # LoRA Experts mode: store dummy lora_params (frozen, for KT wrapper compatibility)
+            # These are NOT added to ParameterDict to avoid being optimized
+            self._dummy_lora_params = lora_params  # Keep reference for KT wrapper
+            self.lora_params = None  # No trainable per-expert LoRA
+        else:
+            # Per-expert LoRA mode: store as module parameters for optimizer
+            self._dummy_lora_params = None
+            self.lora_params = nn.ParameterDict(lora_params) if lora_params else None
 
         # Get router from original MoE
         self.router = getattr(original_moe, moe_config.router_attr)
@@ -515,6 +716,10 @@ class KTMoELayerWrapper(nn.Module):
             self.shared_experts = original_moe.shared_experts
         else:
             self.shared_experts = None
+
+        # Dirty flag for LoRA pointer updates (only update after optimizer.step)
+        # Initialize to True to ensure first forward updates pointers
+        self._lora_pointers_dirty = True
 
     def _apply(self, fn, recurse=True):
         """
@@ -531,17 +736,26 @@ class KTMoELayerWrapper(nn.Module):
         Returns:
             self
         """
-        # Apply to all other components normally (router, shared_experts, etc.)
+        # Apply to all other components normally (router, shared_experts, lora_experts, etc.)
         result = super()._apply(fn, recurse)
 
-        # Force LoRA params back to CPU (they may have been moved to CUDA)
-        for k, v in self.lora_params.items():
-            if v.data.device.type != "cpu":
-                v.data = v.data.to("cpu")
+        # Per-expert LoRA mode: force LoRA params back to CPU
+        if self.lora_params is not None:
+            for k, v in self.lora_params.items():
+                if v.data.device.type != "cpu":
+                    v.data = v.data.to("cpu")
 
-        # CRITICAL: Update wrapper with new LoRA weight pointers
-        # The memory address may have changed after _apply
-        self.update_lora_pointers()
+            # CRITICAL: Update wrapper with new LoRA weight pointers
+            # The memory address may have changed after _apply
+            self.update_lora_pointers()
+            self._lora_pointers_dirty = False
+
+        # LoRA Experts mode: dummy lora params must stay on CPU for KT wrapper
+        # (they are not in ParameterDict so won't be moved, but keep this for safety)
+        if self._dummy_lora_params is not None:
+            for k, v in self._dummy_lora_params.items():
+                if v.data.device.type != "cpu":
+                    v.data = v.data.to("cpu")
 
         return result
 
@@ -549,15 +763,16 @@ class KTMoELayerWrapper(nn.Module):
         """
         Forward pass using KTMoEWrapper.
 
+        Supports two modes:
+        1. Per-expert LoRA mode: Routed experts with per-expert LoRA on CPU AMX
+        2. LoRA Experts mode: Frozen routed experts + trainable LoRA Experts on GPU
+
         Args:
             hidden_states: Input tensor [batch, seq_len, hidden_size]
 
         Returns:
             Output tensor [batch, seq_len, hidden_size]
         """
-        # Update LoRA pointers before forward
-        self.update_lora_pointers()
-
         batch_size, seq_len, _ = hidden_states.shape
 
         # Get topk_ids and topk_weights based on router type
@@ -578,33 +793,79 @@ class KTMoELayerWrapper(nn.Module):
             )
             topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
-        # Apply KTMoE forward with unified interface
-        moe_output = KTMoEFunction.apply(
-            hidden_states,
-            topk_ids,
-            topk_weights,
-            self.wrapper,
-            dict(self.lora_params),
-            self.hidden_size,
-            self.moe_config.num_experts_per_tok,
-            self.layer_idx,
-            self.training,  # save_for_backward: only save cache when training
-        )
+        # Apply MoE forward based on mode
+        if self.lora_experts is not None:
+            # LoRA Experts mode: frozen routed experts (with dummy LoRA) + LoRA Experts
+            moe_output = self._forward_frozen_experts(hidden_states, topk_ids, topk_weights)
+        else:
+            # Per-expert LoRA mode
+            # Only update LoRA pointers when dirty (after optimizer.step or initialization)
+            if self._lora_pointers_dirty:
+                self.update_lora_pointers()
+                self._lora_pointers_dirty = False
+            moe_output = KTMoEFunction.apply(
+                hidden_states,
+                topk_ids,
+                topk_weights,
+                self.wrapper,
+                dict(self.lora_params),
+                self.hidden_size,
+                self.moe_config.num_experts_per_tok,
+                self.layer_idx,
+                self.training,  # save_for_backward: only save cache when training
+            )
 
         # Handle shared experts if present
         if self.shared_experts is not None:
             shared_output = self.shared_experts(hidden_states)
             moe_output = moe_output + shared_output
 
+        # Handle LoRA Experts if present
+        if self.lora_experts is not None:
+            lora_output = self.lora_experts(hidden_states)
+            moe_output = moe_output + lora_output
+
         return moe_output
+
+    def _forward_frozen_experts(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Forward pass through routed experts with frozen dummy LoRA (for LoRA Experts mode).
+
+        Uses KTMoEFrozenFunction to enable gradient propagation to hidden_states
+        while keeping the dummy LoRA parameters frozen.
+
+        Args:
+            hidden_states: Input tensor [batch, seq_len, hidden_size]
+            topk_ids: Expert indices from router [num_tokens, num_experts_per_tok]
+            topk_weights: Routing weights from router [num_tokens, num_experts_per_tok]
+
+        Returns:
+            Output tensor [batch, seq_len, hidden_size]
+        """
+        return KTMoEFrozenFunction.apply(
+            hidden_states,
+            topk_ids,
+            topk_weights,
+            self.wrapper,
+            self.hidden_size,
+            self.moe_config.num_experts_per_tok,
+            self.layer_idx,
+        )
 
     def update_lora_pointers(self):
         """
         Update wrapper with current LoRA weight pointers.
 
         This must be called after optimizer.step().
+        Only applies to per-expert LoRA mode (not LoRA Experts mode).
         """
-        self.wrapper.update_lora_weights()
+        if self.lora_params is not None and self.lora_experts is None:
+            self.wrapper.update_lora_weights()
 
 
 # =============================================================================
@@ -620,6 +881,10 @@ def wrap_moe_layers_with_kt_wrapper(
     """
     Replace model's MoE layers with KTMoEWrapper-based wrappers.
 
+    Supports two modes:
+    1. Per-expert LoRA mode (default): Each routed expert has its own LoRA parameters
+    2. LoRA Experts mode: Frozen routed experts + trainable LoRA Experts on GPU
+
     Args:
         model: HuggingFace model
         model_args: Model arguments
@@ -632,6 +897,9 @@ def wrap_moe_layers_with_kt_wrapper(
     hidden_size = model.config.hidden_size
     lora_rank = finetuning_args.lora_rank
     lora_alpha = finetuning_args.lora_alpha
+
+    # Check if using LoRA Experts mode
+    use_lora_experts = getattr(model_args, "kt_use_lora_experts", False)
 
     wrappers = []
     moe_layer_count = 0
@@ -652,6 +920,12 @@ def wrap_moe_layers_with_kt_wrapper(
     if use_kt_weight_path:
         logger.info(f"Loading INT8 weights from kt_weight_path: {model_args.kt_weight_path}")
 
+    if use_lora_experts:
+        logger.info(
+            f"Using LoRA Experts mode: {model_args.kt_lora_expert_num} experts, "
+            f"intermediate_size={model_args.kt_lora_expert_intermediate_size}"
+        )
+
     # Iterate through transformer layers
     for layer_idx, layer in enumerate(model.model.layers):
         moe_module = get_moe_module(layer, moe_config)
@@ -659,7 +933,8 @@ def wrap_moe_layers_with_kt_wrapper(
             continue
 
         # Log layer info
-        logger.info(f"Wrapping MoE layer {layer_idx} with KTMoEWrapper (method={kt_method}, tp={threadpool_count})")
+        mode_str = "LoRA Experts" if use_lora_experts else "per-expert LoRA"
+        logger.info(f"Wrapping MoE layer {layer_idx} with KTMoEWrapper (method={kt_method}, tp={threadpool_count}, mode={mode_str})")
 
         # 1. Load/Extract MoE weights
         if use_kt_weight_path:
@@ -682,31 +957,61 @@ def wrap_moe_layers_with_kt_wrapper(
             up_proj = up_proj.cpu().to(torch.bfloat16).contiguous()
             down_proj = down_proj.cpu().to(torch.bfloat16).contiguous()
 
-        # 2. Create LoRA parameters (always BF16)
-        lora_params = create_lora_params(
-            expert_num=moe_config.expert_num,
-            hidden_size=hidden_size,
-            intermediate_size=moe_config.intermediate_size,
-            lora_rank=lora_rank,
-            lora_alpha=lora_alpha,
-        )
+        # 2. Create LoRA parameters or LoRA Experts based on mode
+        if use_lora_experts:
+            # LoRA Experts mode: create dummy LoRA params (not trained) for KT wrapper compatibility
+            # We use lora_rank=1 (minimum) with zero-initialized B matrices so output = base + 0
+            dummy_lora_rank = 1
+            lora_params = create_lora_params(
+                expert_num=moe_config.expert_num,
+                hidden_size=hidden_size,
+                intermediate_size=moe_config.intermediate_size,
+                lora_rank=dummy_lora_rank,
+                lora_alpha=1.0,
+            )
+            # Freeze the dummy LoRA params (they won't be trained)
+            for param in lora_params.values():
+                param.requires_grad = False
 
-        # 3. Create KTMoEWrapper instance (SFT mode)
+            # Create LoRA Experts module (this is what we actually train)
+            lora_experts = LoRAExperts(
+                num_experts=model_args.kt_lora_expert_num,
+                hidden_size=hidden_size,
+                intermediate_size=model_args.kt_lora_expert_intermediate_size,
+                device="cuda",
+                dtype=torch.bfloat16,
+            )
+            wrapper_lora_rank = dummy_lora_rank
+            wrapper_lora_alpha = 1.0
+        else:
+            # Per-expert LoRA mode
+            lora_params = create_lora_params(
+                expert_num=moe_config.expert_num,
+                hidden_size=hidden_size,
+                intermediate_size=moe_config.intermediate_size,
+                lora_rank=lora_rank,
+                lora_alpha=lora_alpha,
+            )
+            lora_experts = None
+            wrapper_lora_rank = lora_rank
+            wrapper_lora_alpha = lora_alpha
+
+        # 3. Create KTMoEWrapper instance (always SFT mode for training)
         wrapper = KTMoEWrapper(
             layer_idx=layer_idx,
             num_experts=moe_config.expert_num,
             num_experts_per_tok=moe_config.num_experts_per_tok,
             hidden_size=hidden_size,
             moe_intermediate_size=moe_config.intermediate_size,
-            num_gpu_experts=0,  # All routed experts on CPU for SFT
+            num_gpu_experts=0,  # All routed experts on CPU
             cpuinfer_threads=model_args.kt_num_threads,
             threadpool_count=threadpool_count,
             weight_path="",  # Not used when loading from tensors
             chunked_prefill_size=model_args.model_max_length or 4096,
             method=kt_method,
             mode="sft",
-            lora_rank=lora_rank,
-            lora_alpha=lora_alpha,
+            lora_rank=wrapper_lora_rank,
+            lora_alpha=wrapper_lora_alpha,
             max_cache_depth=getattr(model_args, "kt_max_cache_depth", 1),
         )
 
@@ -722,14 +1027,17 @@ def wrap_moe_layers_with_kt_wrapper(
         )
 
         # 6. Initialize LoRA weights in wrapper
-        wrapper.init_lora_weights(
-            gate_lora_a=lora_params["gate_lora_a"].data,
-            gate_lora_b=lora_params["gate_lora_b"].data,
-            up_lora_a=lora_params["up_lora_a"].data,
-            up_lora_b=lora_params["up_lora_b"].data,
-            down_lora_a=lora_params["down_lora_a"].data,
-            down_lora_b=lora_params["down_lora_b"].data,
-        )
+        # For per-expert LoRA mode: these are trainable
+        # For LoRA Experts mode: these are dummy (frozen) for KT wrapper compatibility
+        if lora_params is not None:
+            wrapper.init_lora_weights(
+                gate_lora_a=lora_params["gate_lora_a"].data,
+                gate_lora_b=lora_params["gate_lora_b"].data,
+                up_lora_a=lora_params["up_lora_a"].data,
+                up_lora_b=lora_params["up_lora_b"].data,
+                down_lora_a=lora_params["down_lora_a"].data,
+                down_lora_b=lora_params["down_lora_b"].data,
+            )
 
         # 7. Create layer wrapper
         layer_wrapper = KTMoELayerWrapper(
@@ -739,6 +1047,7 @@ def wrap_moe_layers_with_kt_wrapper(
             moe_config=moe_config,
             hidden_size=hidden_size,
             layer_idx=layer_idx,
+            lora_experts=lora_experts,
         )
 
         # 8. Replace MoE module in layer
@@ -753,7 +1062,8 @@ def wrap_moe_layers_with_kt_wrapper(
         # Clear original HuggingFace expert weights to free memory
         _clear_original_expert_weights(moe_module, moe_config)
 
-    logger.info(f"Wrapped {moe_layer_count} MoE layers with KTMoEWrapper")
+    mode_str = "LoRA Experts" if use_lora_experts else "per-expert LoRA"
+    logger.info(f"Wrapped {moe_layer_count} MoE layers with KTMoEWrapper ({mode_str} mode)")
     return wrappers
 
 
@@ -832,11 +1142,15 @@ def load_kt_model(
     model._kt_wrappers = wrappers
     model._kt_tp_enabled = model_args.kt_tp_enabled
 
-    # 6. Collect all MoE LoRA parameters
+    # 6. Collect all MoE LoRA parameters (only for per-expert LoRA mode)
     moe_lora_params = {}
     for wrapper in wrappers:
-        moe_lora_params[wrapper.layer_idx] = dict(wrapper.lora_params)
+        if wrapper.lora_params is not None:
+            moe_lora_params[wrapper.layer_idx] = dict(wrapper.lora_params)
     model._kt_moe_lora_params = moe_lora_params
+
+    # Store LoRA Experts mode flag
+    model._kt_use_lora_experts = getattr(model_args, "kt_use_lora_experts", False)
 
     logger.info("Model loaded with KTMoEWrapper backend successfully")
     return model
@@ -845,6 +1159,10 @@ def load_kt_model(
 def get_kt_lora_params(model: "PreTrainedModel") -> list[nn.Parameter]:
     """
     Get all MoE LoRA parameters from KT model.
+
+    This includes:
+    - Per-expert LoRA parameters (in per-expert LoRA mode)
+    - LoRA Experts parameters (in LoRA Experts mode)
 
     Args:
         model: Model with KT wrappers (can be wrapped by PeftModel)
@@ -866,15 +1184,22 @@ def get_kt_lora_params(model: "PreTrainedModel") -> list[nn.Parameter]:
 
     if wrappers:
         for wrapper in wrappers:
-            params.extend(wrapper.lora_params.values())
+            # Per-expert LoRA mode
+            if wrapper.lora_params is not None:
+                params.extend(wrapper.lora_params.values())
+            # LoRA Experts mode
+            if wrapper.lora_experts is not None:
+                params.extend(wrapper.lora_experts.parameters())
     return params
 
 
 def update_kt_lora_pointers(model: "PreTrainedModel"):
     """
-    Update LoRA weight pointers for all KT wrappers.
+    Mark LoRA weight pointers as dirty for all KT wrappers.
 
-    Must be called after optimizer.step().
+    After optimizer.step(), tensor storage addresses may change.
+    This marks wrappers as needing pointer updates on next forward pass.
+    The actual update is deferred to forward() to avoid redundant sync calls.
 
     Args:
         model: Model with KT wrappers (can be wrapped by PeftModel)
@@ -892,7 +1217,7 @@ def update_kt_lora_pointers(model: "PreTrainedModel"):
 
     if wrappers:
         for wrapper in wrappers:
-            wrapper.update_lora_pointers()
+            wrapper._lora_pointers_dirty = True
 
 
 def load_moe_lora_from_adapter(model: "PreTrainedModel", adapter_path: str):
@@ -931,8 +1256,11 @@ def load_moe_lora_from_adapter(model: "PreTrainedModel", adapter_path: str):
         logger.warning("No KT wrappers found, skipping MoE LoRA loading")
         return
 
-    # Build layer_idx -> wrapper mapping
-    wrapper_map = {w.layer_idx: w for w in wrappers}
+    # Build layer_idx -> wrapper mapping (only for wrappers with per-expert LoRA)
+    wrapper_map = {w.layer_idx: w for w in wrappers if w.lora_params is not None}
+    if not wrapper_map:
+        logger.warning("No KT wrappers with per-expert LoRA found, skipping MoE LoRA loading")
+        return
 
     # Load adapter weights
     adapter_file = os.path.join(adapter_path, "adapter_model.safetensors")
@@ -1114,6 +1442,10 @@ def save_moe_lora_to_adapter(model: "PreTrainedModel", output_dir: str) -> None:
     # Convert and add MoE LoRA weights
     moe_lora_count = 0
     for wrapper in wrappers:
+        # Skip wrappers without per-expert LoRA (LoRA Experts mode)
+        if wrapper.lora_params is None:
+            continue
+
         layer_idx = wrapper.layer_idx
         num_experts = wrapper.moe_config.expert_num
 
@@ -1149,4 +1481,239 @@ def save_moe_lora_to_adapter(model: "PreTrainedModel", output_dir: str) -> None:
         f"Saved MoE LoRA to {output_file}: "
         f"{len(wrappers)} layers, {moe_lora_count} MoE LoRA tensors added, "
         f"{len(state_dict)} total tensors"
+    )
+
+
+def save_kt_moe_to_adapter(model: "PreTrainedModel", output_dir: str) -> None:
+    """
+    Unified function to save KT MoE weights to adapter file.
+
+    Automatically detects the mode (per-expert LoRA or LoRA Experts) and saves accordingly.
+    This function merges KT weights with existing Attention LoRA from PEFT.
+
+    Args:
+        model: Model with KT wrappers
+        output_dir: Directory containing the adapter file
+    """
+    wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        logger.warning("No KT wrappers found, skipping KT MoE saving")
+        return
+
+    # Detect mode by checking the first wrapper
+    has_lora_experts = any(w.lora_experts is not None for w in wrappers)
+    has_lora_params = any(w.lora_params is not None for w in wrappers)
+
+    if has_lora_experts:
+        save_lora_experts_to_adapter(model, output_dir)
+    elif has_lora_params:
+        save_moe_lora_to_adapter(model, output_dir)
+    else:
+        logger.warning("No trainable KT MoE parameters found, skipping saving")
+
+
+def load_kt_moe_from_adapter(model: "PreTrainedModel", adapter_path: str) -> None:
+    """
+    Unified function to load KT MoE weights from adapter file.
+
+    Automatically detects the mode (per-expert LoRA or LoRA Experts) and loads accordingly.
+
+    Args:
+        model: Model with KT wrappers
+        adapter_path: Path to PEFT adapter directory
+    """
+    wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        # Try to find wrappers on the base model (for PeftModel case)
+        base_model = model
+        for attr in ["base_model", "model"]:
+            if hasattr(base_model, attr):
+                base_model = getattr(base_model, attr)
+                wrappers = getattr(base_model, "_kt_wrappers", [])
+                if wrappers:
+                    break
+    if not wrappers:
+        logger.warning("No KT wrappers found, skipping KT MoE loading")
+        return
+
+    # Detect mode by checking the wrappers
+    has_lora_experts = any(w.lora_experts is not None for w in wrappers)
+    has_lora_params = any(w.lora_params is not None for w in wrappers)
+
+    if has_lora_experts:
+        load_lora_experts_from_adapter(model, adapter_path)
+    elif has_lora_params:
+        load_moe_lora_from_adapter(model, adapter_path)
+    else:
+        logger.warning("No trainable KT MoE parameters found, skipping loading")
+
+
+def save_lora_experts_to_adapter(model: "PreTrainedModel", output_dir: str) -> None:
+    """
+    Save LoRA Experts weights to adapter file by merging with existing Attention LoRA.
+
+    This function:
+    1. Reads existing adapter_model.safetensors (contains Attention LoRA from PEFT)
+    2. Adds LoRA Experts weights
+    3. Merges and writes back to adapter_model.safetensors
+
+    Args:
+        model: Model with KT wrappers containing LoRA Experts
+        output_dir: Directory containing the adapter file
+
+    Key pattern for LoRA Experts:
+        base_model.model.model.layers.{layer}.mlp.lora_experts.{expert_idx}.{gate_proj|up_proj|down_proj}.weight
+    """
+    import os
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    # Get KT wrappers
+    wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        logger.warning("No KT wrappers found, skipping LoRA Experts saving")
+        return
+
+    # Read existing adapter file (Attention LoRA)
+    adapter_file = os.path.join(output_dir, "adapter_model.safetensors")
+    if not os.path.exists(adapter_file):
+        adapter_file_bin = os.path.join(output_dir, "adapter_model.bin")
+        if os.path.exists(adapter_file_bin):
+            state_dict = torch.load(adapter_file_bin, map_location="cpu", weights_only=True)
+        else:
+            logger.warning(f"No existing adapter file found at {output_dir}, creating new one")
+            state_dict = {}
+    else:
+        state_dict = {}
+        with safe_open(adapter_file, framework="pt") as f:
+            for key in f.keys():
+                state_dict[key] = f.get_tensor(key)
+
+    # Add LoRA Experts weights
+    lora_expert_count = 0
+    for wrapper in wrappers:
+        if wrapper.lora_experts is None:
+            continue
+
+        layer_idx = wrapper.layer_idx
+        for expert_idx, expert in enumerate(wrapper.lora_experts.experts):
+            base_key = f"base_model.model.model.layers.{layer_idx}.mlp.lora_experts.{expert_idx}"
+
+            state_dict[f"{base_key}.gate_proj.weight"] = expert.gate_proj.weight.data.cpu().clone()
+            state_dict[f"{base_key}.up_proj.weight"] = expert.up_proj.weight.data.cpu().clone()
+            state_dict[f"{base_key}.down_proj.weight"] = expert.down_proj.weight.data.cpu().clone()
+
+            lora_expert_count += 3  # 3 tensors per expert
+
+        logger.debug(f"Added LoRA Experts for layer {layer_idx} ({len(wrapper.lora_experts.experts)} experts)")
+
+    # Save merged state_dict
+    output_file = os.path.join(output_dir, "adapter_model.safetensors")
+    save_file(state_dict, output_file, metadata={"format": "pt"})
+
+    logger.info(
+        f"Saved LoRA Experts to {output_file}: "
+        f"{len(wrappers)} layers, {lora_expert_count} LoRA Expert tensors added, "
+        f"{len(state_dict)} total tensors"
+    )
+
+
+def load_lora_experts_from_adapter(model: "PreTrainedModel", adapter_path: str) -> None:
+    """
+    Load LoRA Experts weights from adapter file into KT wrappers.
+
+    Args:
+        model: Model with KT wrappers containing LoRA Experts
+        adapter_path: Path to PEFT adapter directory
+
+    Key pattern for LoRA Experts:
+        base_model.model.model.layers.{layer}.mlp.lora_experts.{expert_idx}.{gate_proj|up_proj|down_proj}.weight
+    """
+    import os
+    import re
+    from safetensors import safe_open
+
+    # Get KT wrappers
+    wrappers = getattr(model, "_kt_wrappers", [])
+    if not wrappers:
+        base_model = model
+        for attr in ["base_model", "model"]:
+            if hasattr(base_model, attr):
+                base_model = getattr(base_model, attr)
+                wrappers = getattr(base_model, "_kt_wrappers", [])
+                if wrappers:
+                    break
+    if not wrappers:
+        logger.warning("No KT wrappers found, skipping LoRA Experts loading")
+        return
+
+    # Build layer_idx -> wrapper mapping
+    wrapper_map = {w.layer_idx: w for w in wrappers if w.lora_experts is not None}
+    if not wrapper_map:
+        logger.warning("No LoRA Experts found in KT wrappers, skipping")
+        return
+
+    # Load adapter weights
+    adapter_file = os.path.join(adapter_path, "adapter_model.safetensors")
+    if not os.path.exists(adapter_file):
+        adapter_file = os.path.join(adapter_path, "adapter_model.bin")
+        if not os.path.exists(adapter_file):
+            logger.warning(f"No adapter file found at {adapter_path}")
+            return
+
+    logger.info(f"Loading LoRA Experts from {adapter_file}")
+
+    # Pattern for LoRA Experts keys
+    lora_expert_pattern = re.compile(
+        r"base_model\.model\.model\.layers\.(\d+)\.mlp\.lora_experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight"
+    )
+
+    # Group weights by layer
+    layer_weights = {}  # layer_idx -> {expert_idx -> {proj -> tensor}}
+    matched_count = 0
+
+    with safe_open(adapter_file, framework="pt") as f:
+        for key in f.keys():
+            match = lora_expert_pattern.match(key)
+            if match:
+                layer_idx = int(match.group(1))
+                expert_idx = int(match.group(2))
+                proj_name = match.group(3)
+
+                if layer_idx not in layer_weights:
+                    layer_weights[layer_idx] = {}
+                if expert_idx not in layer_weights[layer_idx]:
+                    layer_weights[layer_idx][expert_idx] = {}
+
+                layer_weights[layer_idx][expert_idx][proj_name] = f.get_tensor(key)
+                matched_count += 1
+
+    # Load into KT wrappers
+    loaded_count = 0
+    for layer_idx, experts_dict in layer_weights.items():
+        if layer_idx not in wrapper_map:
+            logger.warning(f"No KT wrapper with LoRA Experts for layer {layer_idx}, skipping")
+            continue
+
+        wrapper = wrapper_map[layer_idx]
+        for expert_idx, proj_dict in experts_dict.items():
+            if expert_idx >= len(wrapper.lora_experts.experts):
+                logger.warning(f"Expert index {expert_idx} out of range for layer {layer_idx}, skipping")
+                continue
+
+            expert = wrapper.lora_experts.experts[expert_idx]
+
+            if "gate_proj" in proj_dict:
+                expert.gate_proj.weight.data.copy_(proj_dict["gate_proj"].to(expert.gate_proj.weight.device))
+            if "up_proj" in proj_dict:
+                expert.up_proj.weight.data.copy_(proj_dict["up_proj"].to(expert.up_proj.weight.device))
+            if "down_proj" in proj_dict:
+                expert.down_proj.weight.data.copy_(proj_dict["down_proj"].to(expert.down_proj.weight.device))
+
+        loaded_count += 1
+        logger.debug(f"Loaded LoRA Experts for layer {layer_idx} ({len(experts_dict)} experts)")
+
+    logger.info(
+        f"Loaded LoRA Experts into {loaded_count} KT wrappers from {adapter_path} "
+        f"(matched {matched_count} keys)"
     )

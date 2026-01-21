@@ -65,6 +65,10 @@ def _training_function(config: dict[str, Any]) -> None:
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=finetuning_args.early_stopping_steps))
 
     callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
+    from pyinstrument import Profiler
+
+    profiler = Profiler()
+    profiler.start()
 
     if finetuning_args.stage in ["pt", "sft", "dpo"] and finetuning_args.use_mca:
         if not is_mcore_adapter_available():
@@ -96,6 +100,11 @@ def _training_function(config: dict[str, Any]) -> None:
         run_kto(model_args, data_args, training_args, finetuning_args, callbacks)
     else:
         raise ValueError(f"Unknown task: {finetuning_args.stage}.")
+    
+    
+    profiler.stop()
+    profiler.print()
+    profiler.write_html("profiler_output.html")
 
     if is_ray_available() and ray.is_initialized():
         return  # if ray is intialized it will destroy the process group on return

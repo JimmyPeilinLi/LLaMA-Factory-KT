@@ -1,0 +1,63 @@
+### model
+model_name_or_path: /mnt/data/models/DeepSeek-V2-Lite-Chat
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all_attention  # 只对 Attention 使用 PEFT LoRA，MoE 使用 LoRA Experts
+
+### dataset
+dataset: west_train
+template: deepseek
+cutoff_len: 2048
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: /mnt/data/hxx/outputs/deepseekV2_lora_experts_sft
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 0.01
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+disable_gradient_checkpointing: true
+resume_from_checkpoint: null
+
+### ktransformers (使用 LoRA Experts 模式)
+use_kt: true                           # 启用 KTransformers MoE 后端
+kt_backend: AMXBF16_SkipLora                    # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
+kt_num_threads: 64                     # CPU 线程数
+kt_tp_enabled: true                   # 启用 NUMA 张量并行
+kt_num_gpu_experts: 0                  # GPU 上运行的专家数量 (0=全部在CPU)
+
+### LoRA Experts 配置
+# LoRA Experts 模式：
+# - Routed Experts 冻结在 CPU 上 (无 LoRA)
+# - 新增可训练的 LoRA Experts 在 GPU 上处理所有 token
+# - 输出 = routed_output + shared_output + lora_experts_output
+kt_use_lora_experts: true              # 启用 LoRA Experts 模式
+kt_lora_expert_num: 2                  # 每层 LoRA Expert 数量
+kt_lora_expert_intermediate_size: 1024 # LoRA Expert MLP 中间维度
+
+### eval
+# eval_dataset: alpaca_en_demo
+# val_size: 0.1
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 500

@@ -85,21 +85,60 @@ class KTrainer(CustomSeq2SeqTrainer):
         # Get KT wrappers from model
         self._kt_wrappers = getattr(self.model, "_kt_wrappers", [])
         self._kt_tp_enabled = getattr(self.model, "_kt_tp_enabled", False)
+        self._kt_use_lora_experts = getattr(self.model, "_kt_use_lora_experts", False)
 
-        # Collect MoE LoRA parameters
+        # Collect MoE LoRA parameters (per-expert LoRA mode)
         self._moe_lora_params = []
+        # Collect LoRA Experts parameters (LoRA Experts mode)
+        self._lora_expert_params = []
+
         for wrapper in self._kt_wrappers:
-            self._moe_lora_params.extend(wrapper.lora_params.values())
+            if wrapper.lora_params is not None:
+                self._moe_lora_params.extend(wrapper.lora_params.values())
+            if wrapper.lora_experts is not None:
+                self._lora_expert_params.extend(wrapper.lora_experts.parameters())
 
         if self._kt_wrappers:
-            logger.info_rank0(
-                f"KT Trainer initialized with {len(self._kt_wrappers)} MoE layers, "
-                f"{len(self._moe_lora_params)} MoE LoRA parameters, "
-                f"TP mode: {self._kt_tp_enabled}"
-            )
+            if self._kt_use_lora_experts:
+                logger.info_rank0(
+                    f"KT Trainer initialized with {len(self._kt_wrappers)} MoE layers, "
+                    f"{len(self._lora_expert_params)} LoRA Expert parameters (LoRA Experts mode), "
+                    f"TP mode: {self._kt_tp_enabled}"
+                )
+            else:
+                logger.info_rank0(
+                    f"KT Trainer initialized with {len(self._kt_wrappers)} MoE layers, "
+                    f"{len(self._moe_lora_params)} MoE LoRA parameters (per-expert LoRA mode), "
+                    f"TP mode: {self._kt_tp_enabled}"
+                )
 
         # Disable cache for training
         self.model.config.use_cache = False
+
+        # Flag for computation graph printing
+        self._graph_printed = False
+
+    @override
+    def compute_loss(self, model, inputs, *args, **kwargs):
+        """Compute loss and optionally print computation graph on first call."""
+        loss = super().compute_loss(model, inputs, *args, **kwargs)
+
+        # # Print computation graph on first step (before backward/detach)
+        # if not self._graph_printed and loss.grad_fn is not None:
+        #     self._graph_printed = True
+        #     try:
+        #         from torchviz import make_dot
+        #         # Only include trainable parameters to avoid huge graph
+        #         trainable_params = {k: v for k, v in model.named_parameters() if v.requires_grad}
+        #         dot = make_dot(loss, params=trainable_params, show_attrs=True, show_saved=True)
+        #         dot.render("computation_graph", format="svg")
+        #         logger.info_rank0(f"Computation graph saved to computation_graph.png (with {len(trainable_params)} trainable params)")
+        #     except ImportError:
+        #         logger.warning_rank0("torchviz not installed. Install with: pip install torchviz graphviz")
+        #     except Exception as e:
+        #         logger.warning_rank0(f"Failed to generate computation graph: {e}")
+
+        return loss
 
     @override
     def create_optimizer(self) -> "torch.optim.Optimizer":
@@ -133,7 +172,7 @@ class KTrainer(CustomSeq2SeqTrainer):
         # Collect all trainable parameters
         param_groups = []
 
-        # Group 1: MoE LoRA parameters (no weight decay for LoRA)
+        # Group 1: MoE LoRA parameters (no weight decay for LoRA) - per-expert LoRA mode
         if self._moe_lora_params:
             moe_lora_param_group = {
                 "params": self._moe_lora_params,
@@ -143,8 +182,20 @@ class KTrainer(CustomSeq2SeqTrainer):
             param_groups.append(moe_lora_param_group)
             logger.info_rank0(f"Added {len(self._moe_lora_params)} MoE LoRA parameters to optimizer")
 
+        # Group 1b: LoRA Experts parameters (no weight decay) - LoRA Experts mode
+        if self._lora_expert_params:
+            lora_expert_param_group = {
+                "params": self._lora_expert_params,
+                "weight_decay": 0.0,
+                "name": "lora_experts",
+            }
+            param_groups.append(lora_expert_param_group)
+            logger.info_rank0(f"Added {len(self._lora_expert_params)} LoRA Expert parameters to optimizer")
+
         # Group 2: Other trainable parameters (Attention LoRA, etc.)
         moe_lora_param_ids = {id(p) for p in self._moe_lora_params}
+        lora_expert_param_ids = {id(p) for p in self._lora_expert_params}
+        kt_param_ids = moe_lora_param_ids | lora_expert_param_ids
 
         decay_params = []
         nodecay_params = []
@@ -152,8 +203,8 @@ class KTrainer(CustomSeq2SeqTrainer):
         for name, param in self.model.named_parameters():
             if not param.requires_grad:
                 continue
-            if id(param) in moe_lora_param_ids:
-                continue  # Already added to MoE LoRA group
+            if id(param) in kt_param_ids:
+                continue  # Already added to MoE LoRA or LoRA Experts group
 
             if name in decay_parameters:
                 decay_params.append(param)
@@ -194,26 +245,34 @@ class KTrainer(CustomSeq2SeqTrainer):
         return set(decay_parameters)
 
     def _ensure_moe_lora_in_optimizer(self):
-        """Ensure MoE LoRA parameters are in the optimizer (for custom optimizers)."""
-        if not self._moe_lora_params:
-            return
-
+        """Ensure MoE LoRA and LoRA Experts parameters are in the optimizer (for custom optimizers)."""
         # Check if MoE LoRA params are already in optimizer
         optimizer_param_ids = set()
         for group in self.optimizer.param_groups:
             for param in group["params"]:
                 optimizer_param_ids.add(id(param))
 
-        missing_params = [p for p in self._moe_lora_params if id(p) not in optimizer_param_ids]
+        # Check MoE LoRA params (per-expert LoRA mode)
+        if self._moe_lora_params:
+            missing_moe_lora = [p for p in self._moe_lora_params if id(p) not in optimizer_param_ids]
+            if missing_moe_lora:
+                self.optimizer.add_param_group({
+                    "params": missing_moe_lora,
+                    "weight_decay": 0.0,
+                    "name": "moe_lora",
+                })
+                logger.info_rank0(f"Added {len(missing_moe_lora)} missing MoE LoRA parameters to optimizer")
 
-        if missing_params:
-            # Add missing MoE LoRA parameters to optimizer
-            self.optimizer.add_param_group({
-                "params": missing_params,
-                "weight_decay": 0.0,
-                "name": "moe_lora",
-            })
-            logger.info_rank0(f"Added {len(missing_params)} missing MoE LoRA parameters to optimizer")
+        # Check LoRA Experts params (LoRA Experts mode)
+        if self._lora_expert_params:
+            missing_lora_experts = [p for p in self._lora_expert_params if id(p) not in optimizer_param_ids]
+            if missing_lora_experts:
+                self.optimizer.add_param_group({
+                    "params": missing_lora_experts,
+                    "weight_decay": 0.0,
+                    "name": "lora_experts",
+                })
+                logger.info_rank0(f"Added {len(missing_lora_experts)} missing LoRA Expert parameters to optimizer")
 
     @override
     def training_step(
@@ -235,28 +294,17 @@ class KTrainer(CustomSeq2SeqTrainer):
         """
         loss = super().training_step(model, inputs, num_items_in_batch)
 
+
         # In TP mode, update LoRA weight pointers after gradient is computed
         # Note: The actual pointer update happens after optimizer.step() in _inner_training_loop
         # This is handled by the callback below
 
         return loss
 
-    def _update_lora_pointers(self):
-        """
-        Update AMX operator's LoRA weight pointers.
-
-        This must be called after optimizer.step() in TP mode because
-        the optimizer may modify the underlying tensor storage.
-        """
-        if self._kt_tp_enabled and self._kt_wrappers:
-            from ...model.model_utils.kt_moe import update_kt_lora_pointers
-            update_kt_lora_pointers(self.model)
-
-    def _maybe_log_save_evaluate(self, tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=None):
-        """Override to update LoRA pointers before evaluation."""
-        # Update LoRA pointers before any evaluation
-        self._update_lora_pointers()
-        return super()._maybe_log_save_evaluate(tr_loss, grad_norm, model, trial, epoch, ignore_keys_for_eval, start_time, learning_rate=learning_rate)
+    # NOTE: _update_lora_pointers is no longer needed after optimizer.step()
+    # PyTorch optimizers use in-place updates, so tensor storage addresses don't change.
+    # LoRA pointer updates are only needed after _apply (model.to(), etc.), which is
+    # handled by the dirty flag mechanism in KTMoELayerWrapper.
 
     @override
     def save_model(self, output_dir: Optional[str] = None, _internal_call: bool = False):
@@ -274,35 +322,14 @@ class KTrainer(CustomSeq2SeqTrainer):
         # 1. Call parent to save Attention LoRA via PEFT
         super().save_model(output_dir, _internal_call)
 
-        # 2. Merge MoE LoRA into the adapter file
+        # 2. Merge KT MoE weights (LoRA or LoRA Experts) into the adapter file
         if output_dir is None:
             output_dir = self.args.output_dir
 
         if self._kt_wrappers:
-            from ...model.model_utils.kt_moe import save_moe_lora_to_adapter
-            save_moe_lora_to_adapter(self.model, output_dir)
-            logger.info_rank0(f"Saved MoE LoRA to {output_dir}")
-
-
-class KTAMXOptimizerCallback:
-    """
-    Callback to handle LoRA weight pointer updates after optimizer.step().
-
-    This is used internally by KTrainer to ensure LoRA pointers are
-    synchronized after each optimizer update in TP mode.
-    """
-
-    def __init__(self, trainer: "KTrainer"):
-        self.trainer = trainer
-
-    def on_step_end(self, args, state, control, **kwargs):
-        """Called after optimizer.step() and lr_scheduler.step()."""
-        self.trainer._update_lora_pointers()
-
-    def on_train_end(self, args, state, control, **kwargs):
-        """Called at the end of training."""
-        # Final pointer update
-        self.trainer._update_lora_pointers()
+            from ...model.model_utils.kt_moe import save_kt_moe_to_adapter
+            save_kt_moe_to_adapter(self.model, output_dir)
+            logger.info_rank0(f"Saved KT MoE weights to {output_dir}")
 
 
 def create_kt_trainer(
@@ -342,18 +369,8 @@ def create_kt_trainer(
         **kwargs,
     )
 
-    # Add optimizer callback for LoRA pointer updates in TP mode
-    if getattr(model, "_kt_tp_enabled", False):
-        from transformers import TrainerCallback
-
-        class _KTAMXCallback(TrainerCallback):
-            def __init__(self, kt_trainer):
-                self.kt_trainer = kt_trainer
-
-            def on_step_end(self, args, state, control, **kwargs):
-                self.kt_trainer._update_lora_pointers()
-
-        trainer.add_callback(_KTAMXCallback(trainer))
-        logger.info_rank0("Added KT LoRA pointer update callback for TP mode")
+    # NOTE: No longer need callback for LoRA pointer updates after optimizer.step()
+    # PyTorch optimizers use in-place updates, tensor addresses don't change.
+    # Pointer updates are handled by dirty flag in KTMoELayerWrapper._apply()
 
     return trainer
