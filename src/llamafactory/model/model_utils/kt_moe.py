@@ -507,7 +507,7 @@ class KTMoEFrozenFunction(torch.autograd.Function):
         qlen = ctx.qlen
         hidden_size = ctx.hidden_size
 
-        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
+        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.float32).cpu().contiguous()
 
         # Call wrapper's backward to get grad_input
         # The grad_loras will be computed but we ignore them (frozen)
@@ -609,7 +609,7 @@ class KTMoEFunction(torch.autograd.Function):
         qlen = ctx.qlen
         hidden_size = ctx.hidden_size
 
-        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
+        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.float32).cpu().contiguous()
 
         # Call wrapper's backward
         grad_input, grad_loras = ctx.wrapper.backward(grad_output_flat)
@@ -617,10 +617,21 @@ class KTMoEFunction(torch.autograd.Function):
         # Accumulate LoRA gradients to Parameters
         def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
             grad_on_device = grad.to(param.device)
+            grad_fp32 = grad_on_device.float()
             if param.grad is None:
-                param.grad = grad_on_device.clone()
+                # Keep an fp32 copy for higher-precision accumulation while satisfying autograd dtype checks.
+                param._kt_grad_fp32 = grad_fp32.clone()
+                param.grad = grad_fp32.to(dtype=param.dtype)
+                return
+            if not hasattr(param, "_kt_grad_fp32") or param._kt_grad_fp32 is None:
+                param._kt_grad_fp32 = grad_fp32.clone()
             else:
-                param.grad.add_(grad_on_device)
+                if param._kt_grad_fp32.device != param.device:
+                    param._kt_grad_fp32 = param._kt_grad_fp32.to(param.device)
+                param._kt_grad_fp32.add_(grad_fp32)
+            if param.grad.dtype != param.dtype:
+                param.grad = param.grad.to(dtype=param.dtype)
+            param.grad.add_(grad_fp32.to(dtype=param.dtype))
 
         accumulate_grad(ctx.lora_params["gate_lora_a"], grad_loras["grad_gate_lora_a"])
         accumulate_grad(ctx.lora_params["gate_lora_b"], grad_loras["grad_gate_lora_b"])
@@ -812,7 +823,7 @@ class KTMoELayerWrapper(nn.Module):
                 self.hidden_size,
                 self.moe_config.num_experts_per_tok,
                 self.layer_idx,
-                self.training,  # save_for_backward: only save cache when training
+                self.training and torch.is_grad_enabled(),  # save_for_backward: only save cache when training
             )
 
         # Handle shared experts if present

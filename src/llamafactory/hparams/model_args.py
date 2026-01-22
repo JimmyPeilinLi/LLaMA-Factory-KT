@@ -543,7 +543,7 @@ class KTransformersArguments:
     )
 
     def __post_init__(self):
-        if self.use_kt and self.kt_backend not in ("AMXBF16", "AMXInt8"):
+        if self.use_kt and self.kt_backend not in ("AMXBF16", "AMXINT8"):
             raise ValueError(
                 f"Invalid kt_backend: {self.kt_backend}. "
                 "Must be 'AMXBF16' or 'AMXInt8'."
