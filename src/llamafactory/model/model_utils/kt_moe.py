@@ -507,7 +507,7 @@ class KTMoEFrozenFunction(torch.autograd.Function):
         qlen = ctx.qlen
         hidden_size = ctx.hidden_size
 
-        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.float32).cpu().contiguous()
+        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
 
         # Call wrapper's backward to get grad_input
         # The grad_loras will be computed but we ignore them (frozen)
@@ -588,6 +588,7 @@ class KTMoEFunction(torch.autograd.Function):
         ctx.seq_len = seq_len
         ctx.original_device = original_device
         ctx.original_dtype = original_dtype
+        ctx.layer_idx = layer_idx
 
         # Reshape and return
         output = output.view(batch_size, seq_len, hidden_size)
@@ -609,29 +610,18 @@ class KTMoEFunction(torch.autograd.Function):
         qlen = ctx.qlen
         hidden_size = ctx.hidden_size
 
-        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.float32).cpu().contiguous()
+        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
 
         # Call wrapper's backward
-        grad_input, grad_loras = ctx.wrapper.backward(grad_output_flat)
+        grad_input, grad_loras, grad_weights = ctx.wrapper.backward(grad_output_flat)
 
         # Accumulate LoRA gradients to Parameters
         def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
-            grad_on_device = grad.to(param.device)
-            grad_fp32 = grad_on_device.float()
+            grad_on_device = grad.to(param.device, dtype=param.dtype)
             if param.grad is None:
-                # Keep an fp32 copy for higher-precision accumulation while satisfying autograd dtype checks.
-                param._kt_grad_fp32 = grad_fp32.clone()
-                param.grad = grad_fp32.to(dtype=param.dtype)
-                return
-            if not hasattr(param, "_kt_grad_fp32") or param._kt_grad_fp32 is None:
-                param._kt_grad_fp32 = grad_fp32.clone()
+                param.grad = grad_on_device.clone()
             else:
-                if param._kt_grad_fp32.device != param.device:
-                    param._kt_grad_fp32 = param._kt_grad_fp32.to(param.device)
-                param._kt_grad_fp32.add_(grad_fp32)
-            if param.grad.dtype != param.dtype:
-                param.grad = param.grad.to(dtype=param.dtype)
-            param.grad.add_(grad_fp32.to(dtype=param.dtype))
+                param.grad.add_(grad_on_device)
 
         accumulate_grad(ctx.lora_params["gate_lora_a"], grad_loras["grad_gate_lora_a"])
         accumulate_grad(ctx.lora_params["gate_lora_b"], grad_loras["grad_gate_lora_b"])
@@ -640,13 +630,76 @@ class KTMoEFunction(torch.autograd.Function):
         accumulate_grad(ctx.lora_params["down_lora_a"], grad_loras["grad_down_lora_a"])
         accumulate_grad(ctx.lora_params["down_lora_b"], grad_loras["grad_down_lora_b"])
 
+        # Print abs-mean, max, and norm of accumulated LoRA gradients after backward for this layer.
+        # grad_pairs = [
+        #     ("grad_gate_lora_a", "gate_lora_a"),
+        #     ("grad_gate_lora_b", "gate_lora_b"),
+        #     ("grad_up_lora_a", "up_lora_a"),
+        #     ("grad_up_lora_b", "up_lora_b"),
+        #     ("grad_down_lora_a", "down_lora_a"),
+        #     ("grad_down_lora_b", "down_lora_b"),
+        # ]
+        # for grad_key, param_key in grad_pairs:
+        #     param = ctx.lora_params.get(param_key)
+        #     if param is None or param.grad is None:
+        #         continue
+        #     grad_fp32 = param.grad.detach().float()
+        #     grad_abs_mean = grad_fp32.abs().mean().item()
+        #     grad_abs_max = grad_fp32.abs().max().item()
+        #     grad_norm = grad_fp32.norm().item()
+        #     print(
+        #         "KT MoE grad stats "
+        #         f"(layer {ctx.layer_idx}, {grad_key}): "
+        #         f"abs_mean={grad_abs_mean:.6e} "
+        #         f"abs_max={grad_abs_max:.6e} "
+        #         f"norm={grad_norm:.6e}"
+        #     )
+
+        # # Print abs-mean, max, and norm of current LoRA parameters after backward for this layer.
+        # param_keys = [
+        #     "gate_lora_a",
+        #     "gate_lora_b",
+        #     "up_lora_a",
+        #     "up_lora_b",
+        #     "down_lora_a",
+        #     "down_lora_b",
+        # ]
+        # for key in param_keys:
+        #     param = ctx.lora_params.get(key)
+        #     if param is None:
+        #         continue
+        #     param_fp32 = param.detach().float()
+        #     param_abs_mean = param_fp32.abs().mean().item()
+        #     param_abs_max = param_fp32.abs().max().item()
+        #     param_norm = param_fp32.norm().item()
+        #     print(
+        #         "KT MoE param stats "
+        #         f"(layer {ctx.layer_idx}, {key}): "
+        #         f"abs_mean={param_abs_mean:.6e} "
+        #         f"abs_max={param_abs_max:.6e} "
+        #         f"norm={param_norm:.6e}"
+        #     )
+
         # Reshape grad_input and return
         grad_input = grad_input.view(ctx.batch_size, ctx.seq_len, hidden_size)
         grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
 
+        # # DEBUG: Check grad_input after conversion to original dtype
+        # grad_input_final_fp32 = grad_input.detach().float()
+        # print(f"[DEBUG L{ctx.layer_idx}] grad_input AFTER dtype conversion: "
+        #       f"dtype={grad_input.dtype}, device={grad_input.device}, "
+        #       f"abs_mean={grad_input_final_fp32.abs().mean().item():.6e}, "
+        #       f"abs_max={grad_input_final_fp32.abs().max().item():.6e}, "
+        #       f"norm={grad_input_final_fp32.norm().item():.6e}")
+
+        # Reshape grad_weights for topk_weights gradient
+        num_experts_per_tok = grad_weights.shape[1]
+        grad_weights = grad_weights.view(ctx.batch_size, ctx.seq_len, num_experts_per_tok)
+        grad_weights = grad_weights.to(device=ctx.original_device, dtype=ctx.original_dtype)
+
         # Return None for non-Tensor inputs
         # forward args: hidden_states, topk_ids, topk_weights, wrapper, lora_params, hidden_size, num_experts_per_tok, layer_idx, training
-        return grad_input, None, None, None, None, None, None, None, None
+        return grad_input, None, grad_weights, None, None, None, None, None, None
 
 
 # =============================================================================
@@ -876,6 +929,26 @@ class KTMoELayerWrapper(nn.Module):
         Only applies to per-expert LoRA mode (not LoRA Experts mode).
         """
         if self.lora_params is not None and self.lora_experts is None:
+            # Optimizer/model.to can replace tensor storage; rebind wrapper tensors first.
+            for key in (
+                "gate_lora_a",
+                "gate_lora_b",
+                "up_lora_a",
+                "up_lora_b",
+                "down_lora_a",
+                "down_lora_b",
+            ):
+                param = self.lora_params[key]
+                if param.data.device.type != "cpu":
+                    param.data = param.data.to("cpu")
+                if not param.data.is_contiguous():
+                    param.data = param.data.contiguous()
+            self.wrapper.gate_lora_a = self.lora_params["gate_lora_a"].data
+            self.wrapper.gate_lora_b = self.lora_params["gate_lora_b"].data
+            self.wrapper.up_lora_a = self.lora_params["up_lora_a"].data
+            self.wrapper.up_lora_b = self.lora_params["up_lora_b"].data
+            self.wrapper.down_lora_a = self.lora_params["down_lora_a"].data
+            self.wrapper.down_lora_b = self.lora_params["down_lora_b"].data
             self.wrapper.update_lora_weights()
 
 
