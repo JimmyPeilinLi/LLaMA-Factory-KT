@@ -692,9 +692,6 @@ class KTMoEFunction(torch.autograd.Function):
         #       f"abs_max={grad_input_final_fp32.abs().max().item():.6e}, "
         #       f"norm={grad_input_final_fp32.norm().item():.6e}")
 
-        # Reshape grad_weights for topk_weights gradient
-        num_experts_per_tok = grad_weights.shape[1]
-        grad_weights = grad_weights.view(ctx.batch_size, ctx.seq_len, num_experts_per_tok)
         grad_weights = grad_weights.to(device=ctx.original_device, dtype=ctx.original_dtype)
 
         # Return None for non-Tensor inputs
