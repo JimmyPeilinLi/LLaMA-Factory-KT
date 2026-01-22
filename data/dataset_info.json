@@ -741,5 +741,53 @@
       "prompt": "content"
     },
     "folder": "python"
+  },
+  "cs_arc_challenge": {
+    "file_name": "commonsense/arc_challenge_train.json"
+  },
+  "cs_arc_challenge_val": {
+    "file_name": "commonsense/arc_challenge_val.json"
+  },
+  "cs_arc_easy": {
+    "file_name": "commonsense/arc_easy_train.json"
+  },
+  "cs_arc_easy_val": {
+    "file_name": "commonsense/arc_easy_val.json"
+  },
+  "cs_boolq": {
+    "file_name": "commonsense/boolq_train.json"
+  },
+  "cs_boolq_val": {
+    "file_name": "commonsense/boolq_val.json"
+  },
+  "cs_hellaswag": {
+    "file_name": "commonsense/hellaswag_train.json"
+  },
+  "cs_hellaswag_val": {
+    "file_name": "commonsense/hellaswag_val.json"
+  },
+  "cs_openbookqa": {
+    "file_name": "commonsense/openbookqa_train.json"
+  },
+  "cs_openbookqa_val": {
+    "file_name": "commonsense/openbookqa_val.json"
+  },
+  "cs_piqa": {
+    "file_name": "commonsense/piqa_train.json"
+  },
+  "cs_piqa_val": {
+    "file_name": "commonsense/piqa_val.json"
+  },
+  "cs_social_iqa": {
+    "file_name": "commonsense/social_i_qa_train.json"
+  },
+  "cs_social_iqa_val": {
+    "file_name": "commonsense/social_i_qa_val.json"
+  },
+  "cs_winogrande": {
+    "file_name": "commonsense/winogrande_xl_train.json"
+  },
+  "cs_winogrande_val": {
+    "file_name": "commonsense/winogrande_xl_val.json"
   }
 }

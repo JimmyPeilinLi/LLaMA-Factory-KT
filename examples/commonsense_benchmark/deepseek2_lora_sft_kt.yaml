@@ -1,0 +1,58 @@
+### Commonsense Benchmark - DeepSeek-V2-Lite LoRA SFT (KT Version)
+### Multi-dataset single adapter training for commonsense reasoning tasks
+### Using KTransformers MoE backend for CPU-offloaded training
+
+### model
+model_name_or_path: /mnt/data3/models/DeepSeek-V2-Lite-Chat
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+
+### dataset (8 commonsense datasets merged)
+dataset: cs_arc_challenge,cs_arc_easy,cs_boolq,cs_hellaswag,cs_openbookqa,cs_piqa,cs_social_iqa,cs_winogrande
+template: deepseek
+cutoff_len: 2048
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: saves/deepseek2-lite-kt/lora/commonsense
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-4
+num_train_epochs: 3.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+disable_gradient_checkpointing: true  # Disable for KT training
+resume_from_checkpoint: null
+
+### ktransformers (KTMoEWrapper configuration)
+use_kt: true                    # Enable KTransformers MoE backend
+kt_backend: AMXBF16             # AMX backend type: AMXBF16, AMXINT8, AMXINT4
+kt_num_threads: 60              # CPU threads
+kt_tp_enabled: false            # Enable NUMA tensor parallelism
+kt_num_gpu_experts: 0           # Number of experts on GPU (0=all on CPU)
+
+### eval (validation set configuration)
+### Note: KT supports eval loss but NOT predict_with_generate or compute_accuracy
+eval_dataset: cs_arc_challenge_val,cs_arc_easy_val,cs_boolq_val,cs_hellaswag_val,cs_openbookqa_val,cs_piqa_val,cs_social_iqa_val,cs_winogrande_val
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 500

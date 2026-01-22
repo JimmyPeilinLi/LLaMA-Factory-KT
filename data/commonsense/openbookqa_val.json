@@ -1,0 +1,2502 @@
+[
+  {
+    "instruction": "Question: Frilled sharks and angler fish live far beneath the surface of the ocean, which is why they are known as\nChoices:\nA. Deep sea animals\nB. fish\nC. Long Sea Fish\nD. Far Sea Animals\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Gas can fill any container it is given, and liquid\nChoices:\nA. is standard weight and size\nB. is the opposite of variable\nC. only needs a few\nD. uses what it needs\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: When birds migrate south for the winter, they do it because\nChoices:\nA. they are genetically called to\nB. their children ask for them to\nC. it is important to their happiness\nD. they decide to each year\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: If a person walks in the opposite direction of a compass arrow they are walking\nChoices:\nA. west\nB. north\nC. east\nD. south\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: An example of lots kinetic energy would be\nChoices:\nA. Drinking a cold glass of water\nB. A snail moving across the sidewalk\nC. sitting without moving anywhere\nD. An aircraft taking a trip\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Which organism cannot specialize?\nChoices:\nA. mammal\nB. plant\nC. fish\nD. protozoa\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A person can grow cabbage in January with the help of what product?\nChoices:\nA. Green house\nB. Parliment\nC. Congress\nD. White house\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A frog, in winter, will burrow itself into soft mud, until it freezes, then in the spring\nChoices:\nA. it melts, because it is warm-blooded\nB. it unfreezes, because it is cold-blooded\nC. it remains frozen until it dies\nD. it dies, because it is warm-blooded\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Which describes the size of an object?\nChoices:\nA. It attracts all metals\nB. It is a sphere\nC. It is red and purple\nD. It holds 500 mL of water\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A body may find its temperature to be lowered after\nChoices:\nA. water is heated up\nB. fluid spreads from pores\nC. the air becomes arid\nD. the sky stays bright\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If a person enjoys long, sunny days their favorite month would be\nChoices:\nA. October\nB. July\nC. April\nD. March\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: An example of data collection is\nChoices:\nA. Deleting case files on the computer\nB. Touching evidence without gloves\nC. speaking with a witness\nD. Throwing documents in the trash\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: An animal can hunt by cracking open a\nChoices:\nA. claw\nB. house\nC. shell\nD. bone\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Oil is a nonrenewable resource which tells us that when\nChoices:\nA. it can be remade\nB. it can be found in other places\nC. there is an endless supply\nD. the final barrel is gone, there supply is finished\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Magma contains\nChoices:\nA. particles of iron\nB. Loads of leaves\nC. Soda\nD. Silly Putty\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Dew is formed when what condenses?\nChoices:\nA. carbon dioxide\nB. warm air\nC. H2O haze\nD. oxygen\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: The Earth revolving around the sun can cause\nChoices:\nA. constellations to appear in one place in spring and another in fall\nB. the stars to rotate diagonally in the sky\nC. earth's axis to be widened\nD. stars to fade as winter approaches\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Plants need light for\nChoices:\nA. love\nB. glucose\nC. reading\nD. driving\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Tunnels\nChoices:\nA. lead to less impacted soil\nB. pact down soil to make it denser\nC. firm up the ground\nD. help prevent the effects of erosion\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A fire starts in a wide, open field and catches onto a forest. The fire started even though people were far away from the woods. A potential cause for the start of it could have been\nChoices:\nA. wind\nB. sand\nC. stones\nD. storms\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: To have a positive impact of the environment\nChoices:\nA. use Styrofoam plates and bowls\nB. use more paper towels\nC. salvage plastic bottles instead of throwing them away\nD. drive a car that guzzles gas\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Taking shorter showers leads to\nChoices:\nA. water shortages for the local environment\nB. increased energy consumption by the water heater\nC. an empty water heater\nD. less energy used by the water heater\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Roads present danger to animals because\nChoices:\nA. only chickens can cross the road\nB. people driving cars might be unaware the animal is close by\nC. road signs are hard to read\nD. cops will stop them for speeding\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: plant requires what for photosynthesis\nChoices:\nA. light that changes color\nB. light from our closest star\nC. the reflection of something shiny\nD. light reflected from our orbiting rock\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Winter solstice occurs on a day when\nChoices:\nA. the sun is brightest\nB. the sun is eclipsed\nC. the moon is full\nD. the darkness is greatest\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What boils at the boiling point?\nChoices:\nA. Kool-Aid\nB. Cotton\nC. Paper towel\nD. Hair\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: When vapor condenses overnight it often ends up on\nChoices:\nA. bees\nB. clothing\nC. rosebuds\nD. people\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which is a good source of nutrients for a mushroom?\nChoices:\nA. a trotting horse\nB. a roaring lion\nC. a cut peony\nD. a flying eagle\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: which of these animal's habitat is peat likely to be found?\nChoices:\nA. a dog's habitat\nB. a cat's habitat\nC. a human's habitat\nD. an alligator's habitat\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A strawberry is in zero way a true berry because it\nChoices:\nA. has seeds outside the flesh, unlike the blueberry\nB. is unable to spread its seed\nC. is a different color than other berries\nD. is too wet inside\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: The epidermis is part of\nChoices:\nA. is the largest organ and also the body's first defense against germs\nB. is used the second largest organ and used for breathing by humans\nC. soaks in toxins in the air\nD. repels sunlight and UV rays\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Alligators\nChoices:\nA. eat gar\nB. eat only foliage\nC. have live births\nD. are warm-blooded\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What might occur during an experiment\nChoices:\nA. severe oxygen depletion in the atmosphere\nB. layers of the ozone disintegrating\nC. midterm exams for math class\nD. solution overflowing from a beaker\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Frogs are unable to give live birth, and their eggs are soft, unlike other eggs, in fact\nChoices:\nA. frog eggs are sour\nB. frog eggs are transparent\nC. frog eggs are yellow\nD. frog eggs are hollow\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A woman wants to figure out what renewable resources she can use in order to be more environmentally friendly and sufficient. She decides to use all of these resources that are renewable, with the exception of the one nonrenewable, which is\nChoices:\nA. sunlight\nB. aluminium\nC. wood\nD. water\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Cocoon creation occurs\nChoices:\nA. after the caterpillar stage\nB. after the chrysalis stage\nC. after the eggs are laid\nD. after the cocoon emerging stage\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Where would animals shiver the most?\nChoices:\nA. Arctic Circle\nB. Sumatra\nC. Java\nD. tropical rainforest\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: In the desert it was harder to find a\nChoices:\nA. stream\nB. cactus\nC. dry bed\nD. canyon\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Why can an Owl retain it's body temperature during the winter?\nChoices:\nA. It's neither\nB. It's both\nC. It's cold blooded\nD. It's warm blooded\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What is the source of energy for physical cycles on Earth?\nChoices:\nA. clouds that are heavy with rain\nB. a thinner ozone layer\nC. a medium-sized star which our planet orbits\nD. heat from stars at night\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Pasteurization reduces the amount of bacteria in\nChoices:\nA. green tea\nB. cheddar cheese\nC. orange juice\nD. almond milk\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A person is trapped in a cabin while it storms outside. The person knows it is storming because of\nChoices:\nA. the precipitation\nB. the sun\nC. the sea\nD. the stars\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which would best store new whale offspring?\nChoices:\nA. large egg carton\nB. large aquarium\nC. bag\nD. mud hole\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: All the deer in one area moved away. This could be because\nChoices:\nA. They wanted to go to Disneyland\nB. The deer went for a walk and got lost\nC. all the trees had died from disease and fell down\nD. They wanted to live where there were move wolves to keep them company\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: An herbivore like a giraffe will only consume\nChoices:\nA. green matter\nB. sticks\nC. algae\nD. cheese\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Climate change has sped up dramatically because\nChoices:\nA. CO2 production has accelerated\nB. a rapid decline the production of carbon dioxide\nC. oxygen levels have spiked\nD. Fe has been present in an overabundance\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What is most necessary for a  bitcoin operation\nChoices:\nA. abacus\nB. metal\nC. plastic\nD. wood\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If something is outside during the day what will it receive?\nChoices:\nA. food\nB. sunbeams\nC. energy\nD. water\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A turtle may lay six eggs, and a sea turtle may lay a hundred eggs, and\nChoices:\nA. turtles will hatch more\nB. sea turtles will hatch more\nC. animals can lay eggs\nD. turtles are warm blooded\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Squirrels store acorns\nChoices:\nA. they build their homes from them\nB. they use them to keep warm\nC. to have nourishment thru the cold months\nD. because they like the aesthetic\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Plant growth may be positively affected by\nChoices:\nA. extra rainfall\nB. freezing temperatures\nC. increase in pests\nD. long droughts\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: An electric car uses less gasoline than a regular car because\nChoices:\nA. parts of the engine are flawed\nB. gas is unable to be used\nC. electricity is more expensive\nD. power is prioritized over gas\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Revolution happens when\nChoices:\nA. Earth orbits the moon\nB. Mars orbits the sun\nC. the sun orbits the Earth\nD. the Earth's moon orbits Mars\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: An organism's requirements and its survival rate have what kind of relationship?\nChoices:\nA. indirect\nB. direct\nC. inverse\nD. reverse\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Pumpkin pie spice comes from\nChoices:\nA. animals\nB. plants\nC. rocks\nD. air\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Were the situation to be that all zebra were sterile,\nChoices:\nA. zebra would be endangered\nB. zebra would be overpopulated\nC. zebra would have babies\nD. zebra would die out\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: An example of a seasonal change that a furry animal might adopt could be similar to:\nChoices:\nA. A pumpkin growing seeds internally\nB. A store setting up their Christmas displays\nC. A man looking for breakfast after many hours without food\nD. humans pulling out their heavy outerwear\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What could be used as an electrical conductor\nChoices:\nA. A penny\nB. Shoe laces\nC. Wood\nD. A button\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: How does ice wedging cause rocks to crack?\nChoices:\nA. releasing gas\nB. melting down\nC. being cold\nD. growth in openings\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Fossils are formed when what happens?\nChoices:\nA. layers of leaves and pebbles form a pile\nB. layers of sand are washed up on a beach\nC. dirt builds up in the outdoors\nD. various types of dirt accumulate over something eventually\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: When going in the basement, it's better to have a laser than a\nChoices:\nA. flashlight\nB. light bulb\nC. radio\nD. TV\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Some areas are known for experiencing all four seasons, and winter is one of those seasons. During said season, one may partake in activities such as\nChoices:\nA. swimming\nB. leaf peeping\nC. sledding\nD. surfing\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What can show that loss of resources has a negative impact on the organisms in an area?\nChoices:\nA. lakes dry up and fish species are less varied\nB. when prey is overhunted, predators die\nC. deer need plenty of space to live\nD. sharks need to eat a lot of fish in order to survive\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What vehicle would you use to travel on the majority of the surface of the planet on which we live?\nChoices:\nA. Bike\nB. Boat\nC. Train\nD. Car\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A bear's fur and duck's feathers both help the animal survive by\nChoices:\nA. providing water\nB. providing food\nC. providing warmth\nD. providing oxygen\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: When would the sun set later?\nChoices:\nA. Christmas\nB. Presidents day\nC. Independence Day\nD. Halloween\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: If a species population increases in the birth rate has\nChoices:\nA. ceased\nB. boomed\nC. stalled\nD. fallen\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What's an example of the idea that if one mineral can scratch another mineral then that other mineral is softer than that one mineral?\nChoices:\nA. diamonds can be smashed by rocks\nB. diamond cuts into glass\nC. steel is harder than stone\nD. diamonds are harder than diamonds\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is a source of energy?\nChoices:\nA. bricks\nB. grease\nC. cars\nD. dirt\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If a farmland up the hill gets rainfall, what could happen to lower lands?\nChoices:\nA. all of these\nB. they could get fertilizer washed to them\nC. they could experience unfavorable chemical change in their lands\nD. they could have their lands poisoned\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: In order for a journal to be produced, it first requires\nChoices:\nA. matter which is typically written on\nB. an incredible amount of fame\nC. enough money to buy a house\nD. lucky text written on trees\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What is an example of a raw material being something that comes directly from a source?\nChoices:\nA. cats from a shelter\nB. birds from a nest\nC. manure from a field\nD. salt water from the ocean\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A source of sugar in an ecosystem is\nChoices:\nA. air\nB. soil\nC. tree\nD. bird\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A mark of adulthood common in most species is\nChoices:\nA. paying bills\nB. reproduction\nC. fighting\nD. death\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Bill decided the wolf was a predator after he saw it eat the\nChoices:\nA. apple\nB. grass\nC. bunny\nD. pie\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Layers of the earth include all but\nChoices:\nA. mantle\nB. center\nC. crust\nD. inner core\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What core ingredient of red pasta sauce comes from a flower?\nChoices:\nA. Tomato\nB. Bell Pepper\nC. Oregano\nD. Onion\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: If something were to be melted, it would be heated above its melting point, like\nChoices:\nA. putting peas in a soup\nB. putting jello in warm water\nC. putting ice in the freezer\nD. cooking up cookie dough\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: carbon dioxide plays the same role in plants that oxygen plays in animals\nChoices:\nA. this is accurate\nB. all of these\nC. maybe true\nD. this is untrue\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: As far as plants go, considering their growth, it is unlikely that they would do well in\nChoices:\nA. a large patio setting\nB. a humid, open greenhouse\nC. a damp patch of earth\nD. a basement without windows\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What is likely to be the most direct result of offshore oil leaking?\nChoices:\nA. oil pollutes cities\nB. oil harms ocean life\nC. oil ruins farmland\nD. oil harms forests\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: An individual can conserve by\nChoices:\nA. recycling and using gasoline\nB. recycling and using natural gas\nC. recycling and using solar\nD. recycling and using coal\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which is the slowest to move through water?\nChoices:\nA. swan\nB. duck\nC. robin\nD. goose\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Bats have many quirks, with the exception of\nChoices:\nA. using echolocation\nB. laying eggs\nC. hanging upside down\nD. eating bugs\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Organic food is currently considered best for people because\nChoices:\nA. they avoid using bug killers when grown\nB. they have more vitamins\nC. they use pesticide when growing\nD. they are higher in fiber\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A horse eats some hay, an apple and a sugar cube, then peacefully roams a field after eating while digesting the meal. During this time\nChoices:\nA. the horse throws up\nB. the food is deconstructed\nC. the horse is hungry\nD. the food is poisoned\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Who would be healthier?\nChoices:\nA. a night owl\nB. an party animal\nC. a heavy sleeper\nD. a workaholic\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: When you get farther from water, the water vapor in the air will ______.\nChoices:\nA. increase\nB. decrease\nC. condense\nD. form clouds\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is a good example of camouflage?\nChoices:\nA. when a creature adjusts the shape and color of its body to appear as something else\nB. when a rabbit hides in a patch of grass\nC. when a cat presses its body flat to the ground to hide\nD. when a fish swims with a large group of fish to hide itself\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: plants are the source of\nChoices:\nA. turkeys\nB. tomatoes\nC. cows\nD. chickens\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: As they are immobile, what is an example of how animal life helps the reproduction cycle of plants?\nChoices:\nA. squirrels dropping seeds\nB. birds building nests\nC. human lumber industry\nD. bugs eating leaves\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Living things can all\nChoices:\nA. reproduce asexually\nB. create a progeny\nC. produce spores\nD. find mates\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Stopped means lack of what?\nChoices:\nA. warmth\nB. velocity\nC. height\nD. plants\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Where did Puppigerus live?\nChoices:\nA. bog\nB. ocean\nC. land\nD. marsh\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The circulatory system brings oxygen to the body from where?\nChoices:\nA. The chest\nB. The brain\nC. The feet\nD. The stomach\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A renewable resource is used to produce\nChoices:\nA. petroleum\nB. plastic rulers\nC. notebook paper\nD. Styrofoam plates\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which relationship involves inheritance?\nChoices:\nA. teacher-student\nB. mother-daughter\nC. grandmother-grandfather\nD. friends\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A source of heat at the resort is the\nChoices:\nA. jacuzzi\nB. pool\nC. chair\nD. umbrella\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A car engine usually uses combustion to convert this into a motion and heat.\nChoices:\nA. animal products\nB. plant materials\nC. oil products\nD. solar energy\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: When turned on, which product cannot convert electrical energy into light energy?\nChoices:\nA. chandelier\nB. charger\nC. floor lamp\nD. Christmas tree lights\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A pelican is hungry, so decides to try to catch some fish. In order to do this, the pelican will\nChoices:\nA. use the back of its head\nB. use the bottom of its stomach\nC. use the front of its face\nD. use the back of its tail\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A magnetic effect could pull two rocks together if they're\nChoices:\nA. lacking magnetic properties and far apart\nB. shaped similarly and touching\nC. lacking magnetic properties and touching\nD. both magnetic and at any distance\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Refraction can easily be witnessed in\nChoices:\nA. concrete walls\nB. fake diamonds\nC. Christmas ornaments\nD. a tree\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A man is trying to describe a single vat of juice he has. He needs the best way to tell his friend about the object, so he says\nChoices:\nA. 20 meters of juice\nB. 20 vats of juice\nC. 20 ounces of juice\nD. 20 feet of juice\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: plant life is completely dependent on what?\nChoices:\nA. buying some good food\nB. creating self sustenance food\nC. food given to it\nD. food at the store\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: To prevent illness\nChoices:\nA. properly heat hamburgers and steaks\nB. thaw chicken on uncovered counter tops\nC. eat raw cookie dough\nD. hamburger meat should stay pink\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: An island can sprout up from seemingly suddenly because\nChoices:\nA. underwater volcanoes are invisible\nB. underwater volcanoes are hidden\nC. lava is hot enough to burn\nD. volcanoes have a lot of magma\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: When water freezes, that water\nChoices:\nA. heats up by at least 10 degrees\nB. undergoes a change opposite to compressor\nC. takes up less space\nD. breaks into little pieces\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Where might you find the substance used to make the shiny metallic foil paper used in cooking?\nChoices:\nA. Clouds\nB. Rocks\nC. Wood\nD. Leaves\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What increases the number of pollinators a flower will attract?\nChoices:\nA. The amount of petals\nB. The amount of of fragrance the flower has\nC. The height of the stem\nD. The amount of leaves on the stem\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: You can get Vitamin D from\nChoices:\nA. vegetable oil\nB. greek yogurt\nC. gumdrops\nD. bottled water\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Chloroplasts exist in plants and can be located by knowing where\nChoices:\nA. how many petals most plants have\nB. food is stored in plants\nC. the greenest part of a plant is\nD. if a plant has a thick stem\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Sunlight transfers heat energy to\nChoices:\nA. the star from which scorpions get their name\nB. the planet named after the Roman god of sea\nC. the largest star in the galaxy\nD. the hottest star in the galaxy\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Humans swim in the liquid form of\nChoices:\nA. steam\nB. air\nC. oxygen\nD. carbon\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What can keep you moisturized other than water?\nChoices:\nA. Crackers\nB. Sour Cream\nC. cucumbers\nD. Cheese\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which of these items can a human move by pedal power?\nChoices:\nA. unicycle\nB. canoe\nC. car\nD. sled\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: It takes the Earth one year to go around the sun. It takes the moon how long to make one revolution around our planet?\nChoices:\nA. 2 months\nB. 30 days\nC. 2 years\nD. a decade\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Birds with more angular beaks\nChoices:\nA. will hate any birds with rounded beaks\nB. may chow down on different grub than birds with rounded beaks\nC. will eat the exact same diet as all other birds\nD. may have more trouble eating than other birds\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What might be the natural habitat of a small creature known for making a noise by scraping limbs together?\nChoices:\nA. Among Birches\nB. Amid the snow\nC. In a barn\nD. In the ocean\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Human planet that is orbited by what?\nChoices:\nA. stars\nB. moon\nC. the ocean\nD. sun\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A change in the Earth is\nChoices:\nA. a person's hair growing\nB. a wooded area appearing on land that was once part of the ocean\nC. a wooded area existing next to an ocean\nD. the moon moving around the Earth\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Some vapor is condensing now because it has less\nChoices:\nA. gas\nB. heat\nC. water\nD. steam\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Herbivores contribute to the same type of plants they eat when:\nChoices:\nA. they drink\nB. they eat  animals\nC. they trample them\nD. they die\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What converts electrical energy into light energy in a light bulb?\nChoices:\nA. the light switch\nB. the glass bulb\nC. the metal filament\nD. none\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A person wants to turn on their fan to cool down their room. In order to do this, they will have to\nChoices:\nA. plug it in\nB. spin a wire\nC. make some noise\nD. turn it off\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A river can disappear over a period of time?\nChoices:\nA. this is uncertain\nB. this is sure\nC. all of these\nD. maybe\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A temperature in the negatives during the night got slightly less negative during the day, which means it got more\nChoices:\nA. cold\nB. positive\nC. negative\nD. unpredictable\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Corn is eaten by\nChoices:\nA. homo sapiens and frogs\nB. people and jungle monkeys\nC. homo sapiens and deer\nD. deer and Bengal tigers\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What is natural gas?\nChoices:\nA. a way to gain some warmth by combustion\nB. warming up by sunlight\nC. slowly heating to a boiling point\nD. burning a high fever\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Decomposition\nChoices:\nA. can make dead organisms rise anew like a phoenix\nB. is a process completed by predators\nC. can act as a fertilizer for wild flowers\nD. is extremely detrimental to the surrounding flora\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Sunlight\nChoices:\nA. makes car steering wheels hard to handle in the summer\nB. means your pets need sweaters when outdoors\nC. causes ice to refreeze\nD. cools down the water in local ponds\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Science fact: a cavern is formed by carbonic acid in groundwater seeping through rock and dissolving\nChoices:\nA. sedimentary rock which is  composed mainly of skeletal fragments of marine organisms such as coral, forams and molluscs,\nB. metamorphic rocks that are formed under the surface of the earth from the metamorphosis,\nC. igneous rocks which are formed when magma  cools and hardens or\nD. artist who play the music genre called rock and roll.\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Deer entered the city\nChoices:\nA. to look for people\nB. less food in the wilderness\nC. because coyotes chased them\nD. they have become confused\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: the hourly totals of sunshine are directly connect to\nChoices:\nA. tides\nB. seasons\nC. altitude\nD. weather\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Remora fish\nChoices:\nA. attach themselves to boats like barnacles\nB. act as a support system during a shark's reproduction cycle\nC. are exclusively kelp and seaweed eaters\nD. act as a clean up crew for a shark's crumbs\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A plant root growing into rock cracks is an example of what?\nChoices:\nA. boiling\nB. warm weather\nC. evaporation\nD. abrasion\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What does the earth orbit that causes the seasons to change?\nChoices:\nA. plasma star\nB. venus\nC. mercury\nD. pluto\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: There are metals which will always point north such as\nChoices:\nA. Fe\nB. nickel\nC. gold\nD. silver\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A white environment is likely to be found\nChoices:\nA. in a forest\nB. on a mountain\nC. in a desert\nD. in the ocean\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: One step in creating an alternative fuel is\nChoices:\nA. coal miners looking for coal\nB. gold being sifted from dirt\nC. growing crops of corn\nD. drilling for fossil fuels\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: So many environments receive large amounts of rain, though an exception is\nChoices:\nA. the Sahara\nB. the great plains\nC. the rain-forest\nD. Seattle\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Taking a fingernail and pressing it to salt will show\nChoices:\nA. it is dry\nB. it is wet\nC. it is malleable\nD. it is salty\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: why would a mouse run away from a cat?\nChoices:\nA. to get the cat some milk\nB. to avoid becoming lunch\nC. to avoid paying its debt\nD. all of these\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A golden eagle will hunt using its talons to collect\nChoices:\nA. groupers\nB. berries\nC. bears\nD. humans\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: which of these would most likely reject a really nice burger?\nChoices:\nA. a hungry student who loves burgers\nB. a woman visiting a fast food joint\nC. a teacher on his lunch break\nD. a potted plant in the office\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: The Grand Canyon was formed by the Colorado river by what?\nChoices:\nA. horses pulling carts directing the water\nB. the passage of time\nC. humans making great efforts\nD. the addition of dams\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Earth rotating on its axis\nChoices:\nA. causes stars to die out\nB. causes the moon to loss gravitational pull\nC. causes Orion to seemingly change position in the sky\nD. causes the Sun to rotate\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: The next moon phase after a solar eclipse is\nChoices:\nA. first quarter\nB. full moon\nC. third quarter\nD. super moon\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: If someone is dying of thirst, they can hydrate by\nChoices:\nA. drink acid\nB. visiting a valley\nC. find snow\nD. catching rain\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Magnets may be attracted to\nChoices:\nA. clay pots\nB. roofing nails\nC. paper plates\nD. plastic cutlery\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Of the following household items, which is recyclable?\nChoices:\nA. cooking oil\nB. banana peel\nC. paint\nD. soda can\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: If a lot of people have forgotten about a product, the amount of money made by the person selling it will be\nChoices:\nA. much higher\nB. unchanged\nC. rising slowly\nD. lower than before\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What can you find in a forest\nChoices:\nA. A car\nB. Hogwarts\nC. A unicorn\nD. remedies\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Animals without teeth sometimes eat\nChoices:\nA. seeds\nB. bears\nC. humans\nD. whales\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What creates a valley?\nChoices:\nA. feet\nB. rock\nC. water\nD. sand\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What is the largest organ of the human body?\nChoices:\nA. kidneys\nB. the heart\nC. epidermis\nD. liver\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What eats other organisms?\nChoices:\nA. trees\nB. ingestors\nC. blood\nD. water\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What becomes smoother through weathering?\nChoices:\nA. rainbow\nB. water\nC. cat\nD. pumice\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: The element that heats toast is an example of:\nChoices:\nA. a semi-conductor?\nB. a thermal insulator\nC. a poor conductor\nD. a thermal conductor\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Ice can fall down as\nChoices:\nA. sleet and hail\nB. ice cubes\nC. rain\nD. glaciers\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: nest sitting is left up to the\nChoices:\nA. daddy\nB. the embryo's creator\nC. strangers\nD. male siblings\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The insect's cocoon being created occurs during the\nChoices:\nA. adult stage in a life cycle\nB. egg formation in a life cycle\nC. stage when wings first start to form\nD. final stage in a life cycle\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Rocks sometimes contain what?\nChoices:\nA. element Al\nB. books\nC. wind\nD. fire\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What happens to a cat's fur in the summer?\nChoices:\nA. The fur becomes darker\nB. The fur becomes more dense\nC. It becomes less dense\nD. It stays the same density\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: After evaporation water becomes\nChoices:\nA. ocean\nB. snow\nC. groundwater\nD. ice caps\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A magnet will stick to which of the following?\nChoices:\nA. indium\nB. diamond\nC. wood\nD. hydrochloric acid\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Hypothermia will set in under which conditions:\nChoices:\nA. while exposed to harsh winds in a polar region\nB. while stranded deep in a swap\nC. while swimming in tropical seas.\nD. while exposed to direct sunlight on a tropical island\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A black wall reflects little light, a pink wall reflects pink light a while wall\nChoices:\nA. bounces little light\nB. bounces all light\nC. bounces blue light\nD. bounces red light\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Rocks may be rounded by\nChoices:\nA. photosynthesis\nB. audio feedback\nC. hydro-erosion\nD. Cloudy conditions\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What do octopuses release to blind predators?\nChoices:\nA. meat\nB. water\nC. dark pigment\nD. plants\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which decreases visibility while driving?\nChoices:\nA. opening the sunroof\nB. spraying windshield fluid\nC. adjusting side mirrors.\nD. turning on headlights\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What contains moons?\nChoices:\nA. ships\nB. space mass\nC. people\nD. plants\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What would be used to measure the substance which historically the Dutch and other farmers used to power the blades on the structure which moves water from low to highlands?\nChoices:\nA. anemometer\nB. magnetometer\nC. manometer\nD. thermometer\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What is it called when h20 falls from a fluffy object to land on the top of cloth suspended on a rod?\nChoices:\nA. mechanization\nB. evaporation\nC. precipitation\nD. transpiration\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What animal can live without oxygen\nChoices:\nA. shark\nB. Loriciferans\nC. platypus\nD. Turtle\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: An inherited characteristic present in a baby is\nChoices:\nA. number of ears\nB. birth date\nC. birth weight\nD. number of siblings\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: if your shoe changes form at a certain heat level, what can that be described as?\nChoices:\nA. none of these\nB. the liquid content of the shoe\nC. the melting range of that item\nD. the visual design of the shoe\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which would be the product of a solid that was brought above its melting point?\nChoices:\nA. water turning into ice\nB. iron turning to rust\nC. tadpoles turning into frogs\nD. glacier turning into water\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A beaver is going to experience a long winter in the upcoming months. The beaver knows that the weather is changing, so it begins to eat more and more food, knowing that it can survive meager months by being\nChoices:\nA. overweight\nB. weighted\nC. underweight\nD. starved\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Lighting a candle will cause the candle to\nChoices:\nA. combust\nB. petrify\nC. float\nD. yell\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Vaccines\nChoices:\nA. are only necessary for immuno-comprised people\nB. help prevent outbreaks of once dormant diseases\nC. provide little protection against diseases\nD. are unimportant and under researched\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Jim wanted baby chickens so he gathered eggs and used a\nChoices:\nA. lamp\nB. ice cube\nC. refrigerator\nD. snow\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Nerves are used to feel what on the skin?\nChoices:\nA. creativity\nB. stares\nC. emotions\nD. coldness\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Substances may be combined by the pouring of one into another, for example when\nChoices:\nA. filling up a tub\nB. putting a lemon in water\nC. adding grenadine to soda\nD. putting food in a bowl\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Viewing stars is made easier by\nChoices:\nA. technology that uses electromagnetic induction\nB. technology that collects electromagnetic radiation\nC. technology that picks up sound in space\nD. technology that transforms kinetic energy\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Sugar may increase the sweetness of a dish such as in\nChoices:\nA. lasagna\nB. corn\nC. fettuccine\nD. churros\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A person could get in trouble for doing what in a protected environment?\nChoices:\nA. volunteering\nB. hunting\nC. studying the environment\nD. working\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A winter storm is ravaging a city, so weather advisories are put out to the public. However, a man still need to get to work on time, so he takes his car on the highway. While driving, he discovers\nChoices:\nA. the roads are clear\nB. it is difficult to see\nC. the car is very hot\nD. the streets are empty\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The southern and northern hemisphere's seasons are opposite each other, so when the northern hemisphere is having it's longest day, it's the southern hemisphere's\nChoices:\nA. winter solstice\nB. fall equinox\nC. summer solstice\nD. spring equinox\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What does photosynthesis require\nChoices:\nA. a daffodil to absorb rays of Sol\nB. a torrential amount of rainfall\nC. a bee to pollinate the bud\nD. a tree to absorb argon\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: which of these would disturb a standing body of water?\nChoices:\nA. a boat setting sail\nB. an insect flying hundred feet above\nC. a rock tossed in\nD. A and B above\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: There are twenty-four new seasons in\nChoices:\nA. six years\nB. four years\nC. five years\nD. two years\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: We are trying to use air as sources of energy because there is an infinite amount of it, same with water. These are two examples of\nChoices:\nA. Coal sources\nB. Fossil Fuels\nC. Limited resources\nD. Renewable resources\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Which is recyclable\nChoices:\nA. fiberglass\nB. soda can\nC. Styrofoam food container\nD. motor oil\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If two blocks have unequal mass, which will speed up the most with a common force applied\nChoices:\nA. neither move\nB. The heavier\nC. equal\nD. The lighter\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Sea turtles share space with\nChoices:\nA. geckos\nB. catfish\nC. sea weed\nD. river otters\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: More sunlight will be absorbed by\nChoices:\nA. a rose with tiny leaves\nB. a daisy with thin, short leaves\nC. a peony with wide, smooth leaves\nD. a daffodil with curled leaves\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Some fish species, when hunting, will lurk in the shallowest portions of water and actually leave the water in order to capture prey. These fish are able to hunt in this fashion after years of\nChoices:\nA. training in a school\nB. adapting to their needs\nC. adapting to new music\nD. wishing for it to work\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: if a person had one of these, they could live permanently under water\nChoices:\nA. a very long nose\nB. two hands and two legs\nC. a very big mouth\nD. a gill for extracting gases\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Storms lead to\nChoices:\nA. an increase in water temperature\nB. an uptick in local ponds fish supply\nC. an increase in issues from drought conditions\nD. an uptick in local ponds water level\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What is the ultimate source of greeting cards?\nChoices:\nA. deserts\nB. waterfalls\nC. forests\nD. canyons\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which animal is known to have many learned behaviors?\nChoices:\nA. sea park dolphins\nB. saltwater crocodiles\nC. aquarium fish\nD. plains buffaloes\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: The stars in the night sky make a yearly\nChoices:\nA. donation\nB. resolve\nC. restructuring\nD. revolution\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A predator such as a hawk may kill prey by\nChoices:\nA. batting with a paw\nB. clutching in its talons\nC. using a strong wing\nD. eating a rat's claw\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is it called when a cell converts oxygen and carbohydrates into carbon dioxide, water, and energy?\nChoices:\nA. adaptation\nB. breathing\nC. food transformation\nD. catabolic reactions\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A plant stem contains a system of tubes for transporting water and nutrients to\nChoices:\nA. the sun\nB. the hive mind\nC. its neighbors\nD. itself\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What is an example of a change in the Earth?\nChoices:\nA. an expanse of water turning to forested land\nB. a duck living in the woods\nC. a forest growing larger\nD. a river flowing strongly\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: when it turns day and night on a planet, what cause this?\nChoices:\nA. the sun goes to take a rest in a different place\nB. the world itself spins, causing it\nC. the moon causes this to happen\nD. the planet puts off the lights\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Environments which are forested are often green; what is an example of this?\nChoices:\nA. a thriving jungle canopy\nB. a dry, sandy desert\nC. a snowy icy glacier\nD. a cold, empty mountaintop\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Why might a person fall asleep after being lost in a forest on a freezing cold day?\nChoices:\nA. energy levels decrease\nB. energy levels increase\nC. They live there\nD. A big meal.\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What do city-dwellers eat?\nChoices:\nA. dirt\nB. rocks\nC. Ohio State\nD. crops\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What does a tuna have that causes it to swim faster than a seahorse?\nChoices:\nA. Lower body temperature\nB. Bigger scales\nC. Bigger fins\nD. Thicker caudal fin\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Pollinators are attracted to\nChoices:\nA. mild smells\nB. strong personalities\nC. weak scents\nD. strong aromas\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Leaves play an important role in photosynthesis by being\nChoices:\nA. a receptacle for solar energy\nB. a receptacle for oxygen\nC. a release point for carbon dioxide\nD. a go between for the exchange of information\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A man wants to create a room that he can light up with the flick of a switch. To do this, he sends some electricity into a completed electrical circuit, through a conductor, which allows\nChoices:\nA. light from the sun to shine\nB. lights to be burned out\nC. sunlight to shine through bulbs\nD. his plan to succeed\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: The inventor of pasteurization also worked on\nChoices:\nA. vaccinations\nB. telephones\nC. automobiles\nD. electricity\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Lemonade tastes like\nChoices:\nA. citrus\nB. bananas\nC. apples\nD. strawberries\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: During seasonal changes, like from summer to fall, what is a common noted change?\nChoices:\nA. evenings are much brighter\nB. new leaves begin to grow\nC. stars are seen more easily at night\nD. the sun begins to set earlier\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A wasp will use it's stinger\nChoices:\nA. if the wasp is flying about unimpeded\nB. if a person grabs the wasp\nC. if a person ignores the wasp\nD. if a wasp is hanging out in it's nest\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The basic outside of our planet is comprised of\nChoices:\nA. types of stone\nB. frozen green grass\nC. solid ice balls\nD. molten hot lava\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A bird would find nest making materials in a\nChoices:\nA. building\nB. pond\nC. cave\nD. tree\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Canyons are rock formations with cliffs that\nChoices:\nA. take a long time to produce\nB. have sharks in the water\nC. are very narrow and shallow\nD. are billions of years old\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What is the best example of a live birth?\nChoices:\nA. a fish laying a clutch\nB. a platypus warming an egg with its furry body until a baby is born\nC. a bird warming the eggs in her nest until they hatch\nD. a koala delivering into her pouch\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Which of these would need the fewest hydrocarbon chains containing eight carbon atoms?\nChoices:\nA. electric car\nB. turbocharged car\nC. gasoline car\nD. antique car\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Skunks are an animal which has a stink sack, which means that\nChoices:\nA. it is unable to smell\nB. it births live young\nC. other creatures avoid it\nD. it is a predator\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Evaporation is the reason that\nChoices:\nA. crime is on the rise in the cities\nB. a rain puddle is suddenly gone\nC. the polar ice caps are spreading\nD. the Earth is turning into a dirt ball\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If farmers want larger chicken populations\nChoices:\nA. they should reduce the rooster population\nB. they should decrease the number of hens\nC. they should encourage predation\nD. they should research methods that increase laying\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A factory is producing various items. If the factory wants to produce something that will itself produce little pollution, it could create\nChoices:\nA. trucks\nB. windmills\nC. ships\nD. cars\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What source of power can be used up completely?\nChoices:\nA. Water\nB. wind\nC. sunlight\nD. natural gas\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What might Lassie do to beat the heat?\nChoices:\nA. Pant\nB. Drink tea\nC. Sleep\nD. Eat ice\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: in science, what is a cause and effect guess called?\nChoices:\nA. a final solution\nB. an academic hypothesis\nC. a wild guess\nD. a big problem\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Cycles of freezing and thawing water\nChoices:\nA. causes healing of clefts in rocks\nB. smaller rocks to fill in large cracks\nC. makes rocks more secure\nD. causes fissures in rocks to enlarge\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A device may locate the northern portion of a forest through\nChoices:\nA. Fe pulls\nB. series of attractions\nC. large robots\nD. metal conductors\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A sound that is made by an animal with two legs is\nChoices:\nA. oink\nB. meow\nC. moo\nD. cluck\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: do scars come naturally?\nChoices:\nA. they just appear\nB. they are gifted\nC. they are bought\nD. they are earned\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Life sustaining substances are required for\nChoices:\nA. air\nB. zebras\nC. plastic\nD. the sun\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Creatures such as opossums and raccoons are scavengers, meaning that they get their food from various sources, wherever and however they can, even from trash cans. This can negatively impact the creature's health if\nChoices:\nA. the food is warm\nB. the food is past its prime\nC. the food is yummy\nD. the food is fresh\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A few weeks after the month of December in the heart of Australia is often referred to as?\nChoices:\nA. winter\nB. springtime\nC. summer\nD. Halloween\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What is an instance of carnivores only eating animals?\nChoices:\nA. a mouse eating a cricket\nB. a dog devouring a piece of cheese\nC. tyrannosaurus rex devouring a pterodactyl\nD. a cat eating grass outdoors\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: An example of conservation would be\nChoices:\nA. burning\nB. sinking\nC. burying\nD. going green\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What vitamins help heal bones?\nChoices:\nA. vitamin k\nB. vitamin c\nC. vitamin D meals\nD. human vitamins\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: An example of an electric insulator is\nChoices:\nA. a circuit board\nB. a light bulb\nC. a brick wall\nD. a wire\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Hitting the keys of a piano is like playing\nChoices:\nA. a lute\nB. a broadcast\nC. a concert\nD. a recital\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Seeds can be dispersed through all sorts of creative ways, such as\nChoices:\nA. a person orders flowers from a florist\nB. a man looks at a bed of flowers\nC. a dog sneezes in a field and disrupts the air around plants\nD. a man asks his dog if it wants some flowers\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: At a meal one plate seems to be larger than the other plates.  That plate is\nChoices:\nA. plate in a kitchen cabinet\nB. plate on the kitchen counter\nC. the person sitting next to you's plate\nD. a person at the other side of the table's plate\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: This can be used to light up a light bulb\nChoices:\nA. grass\nB. dirt\nC. stones.\nD. biofuel\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: When did the pond have less heat energy?\nChoices:\nA. when people sat by it\nB. when people skated on it\nC. when people fished in it\nD. when people swam in it\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: In the springtime, animals engage in ritual behavior such as\nChoices:\nA. creating bedding for young\nB. picking flowers for mates\nC. hunting for new prey\nD. migrating to cold environments\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Recently, a lot of people, en masse, were told that they should take an opportunity to cast an image of an object through a pinhole onto a screen, in order to best enjoy an activity. This was because\nChoices:\nA. scientists are lacking fun\nB. eclipses are best to look at directly\nC. science tells us eclipses are scary\nD. avoiding looking directly at an eclipse is important\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: how can one alter plants without interacting directly with it?\nChoices:\nA. do a rain dance\nB. all of these\nC. leave it as it is\nD. change its current habitat\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Sleet is made of\nChoices:\nA. a substance used to keep drinks cold\nB. snow and manmade materials\nC. small crystals of salt\nD. phosphates and other chemicals\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A thin beak is most useful to\nChoices:\nA. allow a bird to fly faster\nB. allow a bird to forage in trashcans for food\nC. allow a bird to hunt for food in wide spaces\nD. allow a bird to hunt for food in tight spaces\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Bacteria\nChoices:\nA. is lacking in any benefits to an organism\nB. is unable to infect any organisms\nC. can be beneficial and detrimental to an organism's health\nD. is always harmful to an organism\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: in which of these environments would one ideally situate a farm?\nChoices:\nA. in the middle of the desert\nB. none of these\nC. in the rocky mountains\nD. over on the grassland\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Telephones will transfer acoustics using what energy\nChoices:\nA. gamma radiation\nB. heat transfer\nC. electron flow\nD. light pulses\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: An example of a flexible container\nChoices:\nA. Play dough\nB. Bricks\nC. Bones\nD. Carrots\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: which one of these methods can a potential prey use to escape attack?\nChoices:\nA. making sounds like a known larger animal\nB. presenting itself to its predator\nC. none of these\nD. salting itself to be more palatable\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: okra has to have water, sun and what to grow\nChoices:\nA. planter\nB. music\nC. Earth\nD. shade\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A lake, pond, or stream can all be used to\nChoices:\nA. collect fluid from\nB. make extra food\nC. rain water down\nD. create new houses\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: On a particularly hot day, a young woman clicks on a fan in the room, and the blades of the fan begin to quietly rotate in a circular motion, which\nChoices:\nA. heats up the surrounding air\nB. rustles the air around it\nC. pulls dust into a vacuum\nD. blasts cold air outdoors\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Windy means what is going at high speeds?\nChoices:\nA. water\nB. gales\nC. cars\nD. dirt\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is an example of weathering occurring over several years?\nChoices:\nA. a stone becoming smoother\nB. wood becoming rotten over time\nC. a cabin being shut down for the season\nD. a tree becoming taller\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: As the amount of fragrance of a flower increases, the better chances it has at\nChoices:\nA. growing\nB. dying\nC. reproducing\nD. looking pretty\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Food digestion in humans can be aided by\nChoices:\nA. microorganisms that have cell walls but lack organelles\nB. hundreds of white blood cells\nC. amoebas in the blood supply\nD. carbon dioxide from the respiration process\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which would a scavenger most likely eat?\nChoices:\nA. a swimming fish\nB. a nesting bird\nC. run over deer\nD. a skulking hyena\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Efforts to preserve the ecosystem might lead national parks to\nChoices:\nA. encourage hunting\nB. promote logging\nC. ban fishing\nD. encourage new species\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: The thermal production of a stove is generically used for\nChoices:\nA. warming food\nB. heating homes\nC. producing food\nD. cooling pets\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which requires respiration to use energy?\nChoices:\nA. solar collector\nB. car\nC. skunk\nD. oil well\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: When a insect looks like another type of entity what is it called?\nChoices:\nA. six legs\nB. spider eggs\nC. birds of prey\nD. facade\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Nerves are used in order to sense which things?\nChoices:\nA. the sound and sadness of a baby's cry\nB. the smell of dirty trash\nC. the warmth and touch of a kiss on the cheek\nD. the warming feeling of being told you are loved\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: The gravitational pull of the sun causes what phenomenon?\nChoices:\nA. planetary revolution\nB. creation of moons\nC. creation of rings\nD. planetary cooling\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: We looked at the arrow on the compass and then turned around and walked in the opposite direction.  We were walking\nChoices:\nA. south\nB. east\nC. west\nD. north\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: When blood passes thru the primary element of the respiratory system it's diffused with\nChoices:\nA. the first element on the periodic chart\nB. a compound released by the burning of fossil fuels\nC. an element released by plants\nD. a compound used by plants\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: When Gia cooked her no-bake cookies too long, she discovered they had become hard, (though un-burnt). what is the most likely reason?\nChoices:\nA. The sugar had undergone crystallization\nB. It was so cold in the room if froze\nC. she used too many oats\nD. She used old sugar\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What happens when man moves into new environments?\nChoices:\nA. native species go wild\nB. native species thrive more\nC. native species grow large\nD. native species loses home\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: An example of heat changing the state of matter could be\nChoices:\nA. jello becoming liquid when placed in a hot pan\nB. water becoming warm when heated\nC. a bath being more comfortable when it is hot\nD. a pool receiving more visitors when warmed\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Animals require\nChoices:\nA. the help of people\nB. the environmental output of plants\nC. the same gas needed for photosynthesis\nD. a lack of natural resources\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is an example of the appearance of stars seeming to move in relation to the horizon at night?\nChoices:\nA. constellations may appear higher or lower in the sky depending on the hour\nB. constellations may appear to be upside down some nights\nC. depending on weather, constellations may be clearly visible at night\nD. some stars are unable to be seen on certain nights\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What month is in the season after spring in the northern hemisphere?\nChoices:\nA. june\nB. november\nC. march\nD. december\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A man wants to use a material in a project that will be nonrenewable. The man decides to use\nChoices:\nA. grass\nB. solo cups\nC. raindrops\nD. muddy water\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The fish reproduction technique supplies\nChoices:\nA. coral reefs\nB. chunk tuna\nC. roe\nD. fish sticks\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Water vapor cooling over night\nChoices:\nA. leaves dew on people\nB. forms black ice on bridges\nC. forms puddles on roads\nD. leaves behind wet foliage\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What do bees convert nectar into?\nChoices:\nA. different types of corn syrup\nB. rather large rock formations\nC. bees of different sizes\nD. sweet stuff sold in grocery stores\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: what happens when an animals' food intake increases\nChoices:\nA. it grows taller in size\nB. it jogs to burn energy\nC. it throws up the excess food\nD. the fat transfers into more pounds\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What would a rabbit most likely eat\nChoices:\nA. squirrel\nB. squid\nC. rhododendron\nD. mouse\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Decomposition occurs when a decomposer recycles nutrients from dead organisms back to the soil by eating them; what is an example of this?\nChoices:\nA. flies laying eggs on a body\nB. worms devouring a corpse\nC. wet leaves denigrating in a pile\nD. slugs digging through mulch\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A full moon and a crescent moon occur normally\nChoices:\nA. every two fortnights\nB. every week\nC. yearly\nD. every evening\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: The moon's gravity\nChoices:\nA. pulls stars into it's orbit\nB. determines when neap and ebb are on Earth\nC. keeps objects on Earth grounded\nD. forces the sun to orbit around it\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The moon has\nChoices:\nA. water sources\nB. large diamonds\nC. rolling grassy hills\nD. raised portions\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Chlorophyll allows plants to soak up\nChoices:\nA. solar rays\nB. acid rain\nC. pollen\nD. fertilizer\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: If something living requires sustenance, it will likely\nChoices:\nA. seek out a form of nutrients\nB. feel like it could eat\nC. try to enjoy life\nD. gather nutrients for friends\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Plants grow because they\nChoices:\nA. decide the time is right\nB. can breathe a lot of air\nC. use what people breathe out to survive\nD. take photos of other plants\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Plant lights can be useful in order to\nChoices:\nA. dry up several plants\nB. lower energy costs at home\nC. recreate effects of the sun\nD. give dogs good lighting\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: As a car drives off in the night\nChoices:\nA. the taillights recede into the dark\nB. only the bumper is visible\nC. the taillights get brighter the further they go\nD. the taillights are turned off\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A large mill in the area has led to streams and rivers being filled with\nChoices:\nA. rapids\nB. boats\nC. fish\nD. pollutants\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What action has a positive impact on the conservation of nonrenewable resources?\nChoices:\nA. depositing the nonrenewable resources in a landfill\nB. waste as much of the resources as possible\nC. start a large bonfire with resources\nD. turn the nonrenewable into something newly usable\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: in electricity ceramics are sometimes used to\nChoices:\nA. increase voltage\nB. decrease wattage\nC. slow transfers\nD. multiply amperage\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A rabbit has thicker fur in\nChoices:\nA. April\nB. July\nC. October\nD. January\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A tape measure aids in\nChoices:\nA. deciding what color to paint a room\nB. figuring the state of matter of an object\nC. formulating the area of a room\nD. determining mass of an object\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What happens when someone on top of a bicycle starts pushing it's peddles in a circular motion?\nChoices:\nA. the bike wheelies\nB. the bike turns\nC. the bike brakes\nD. the bike accelerates\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: If a mosquito dies and is sucked into mud\nChoices:\nA. it will be eaten\nB. it will be disintegrated\nC. it will be decayed\nD. years later it can still be seen\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: trees have chlorophyll so they make their own\nChoices:\nA. root structure\nB. water\nC. scheduled\nD. nutrients\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What kept the bat on course?\nChoices:\nA. luck\nB. magic\nC. snow\nD. reflected sound waves\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Things people eat come from\nChoices:\nA. mountains\nB. canyons\nC. cities\nD. farms\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What would you use in an apartment to keep your neighbor below from hearing you shuffle around a room?\nChoices:\nA. yarn\nB. wood\nC. carpet\nD. tile\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: if an adult salmon goes back to where it was born, which of these is likely?\nChoices:\nA. it wants to deposit its offspring\nB. it is about to die\nC. it is looking for its friend\nD. it is searching for its mother\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: If the north is cold and the midnorth is warm, there will be\nChoices:\nA. snow\nB. stars\nC. air motion\nD. fires\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A guy wants to make dinner for his family, so he puts a pan on the stove, adds some meat, and turns on the stove so that heat is being added to the pan. As the meat is warmed through, beginning to sizzle, it is\nChoices:\nA. being juiced\nB. being seared\nC. being frozen\nD. being smoked\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is needed to make an island?\nChoices:\nA. boat\nB. volcano\nC. coral\nD. tree\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: It would be harder to grow a palm tree in\nChoices:\nA. Texas\nB. Idaho\nC. Arizona\nD. South Carolina\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A moth\nChoices:\nA. builds a cocoon as part of its death ritual\nB. needs a chrysalis as part if its life cycle\nC. undergoes complete metamorphosis in one day\nD. is born with wings\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: glucose is easily soluble in\nChoices:\nA. H2O\nB. wood\nC. alcohol\nD. sand\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What time of day does a solar panel work best?\nChoices:\nA. 9:15 pm\nB. 1:45 pm\nC. 8 am\nD. 5:30 pm\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Sediment built up around the shed due to:\nChoices:\nA. magic\nB. tornado\nC. luck.\nD. cars\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Two gears grinding against each other will raise which of their properties?\nChoices:\nA. phase\nB. temperature\nC. taste\nD. mass\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: electrical current does what to a wire to cause it to heat up\nChoices:\nA. carry it\nB. merge with it\nC. run from it\nD. traverse it\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: if the surface of our planet is different after a while, what could have happened?\nChoices:\nA. the surface eroded on its own\nB. all of these\nC. there were natural occurrences\nD. man has damaged the surface\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Sunlight is a source of\nChoices:\nA. wind energy\nB. warmth\nC. frigid temperatures\nD. moonlight\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What contributes to prey animals being able to survive predators long enough to mate?\nChoices:\nA. hiding in bushes\nB. eating sweets\nC. how they're named.\nD. listening to music\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Peat is derived from\nChoices:\nA. saplings and flowering seedlings\nB. compaction of water and soil\nC. compressing of deteriorating foliage\nD. floating debris in swamp water\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: which of these scenarios would result in the ugliest TV screen?\nChoices:\nA. a bowl of quartz is emptied on it\nB. a handkerchief drops on it\nC. a bowl of cotton is emptied on it\nD. a silk tie falls on it\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which of the following is true?\nChoices:\nA. Ice will turn to water vapor when it stays under its boiling point\nB. Liquid water will turn to ice below its freezing point\nC. Ice will turn to liquid water below its freezing point\nD. Liquid water will turn to water vapor when the temperature is more than its boiling point\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A bear hibernates through cold weather because\nChoices:\nA. bears get very tired\nB. it is gestating young\nC. resources are scarce in winter\nD. winter is too cold\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Which shows a way to preserve natural resources:\nChoices:\nA. run dishwasher full\nB. using gasoline engines\nC. tossing lawn clippings\nD. throwing out aluminum\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A canyon is created by a strong force such as\nChoices:\nA. water dripping\nB. thunder rusting\nC. lightening striking\nD. rapids crashing\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A jellyfish's abilities exclude\nChoices:\nA. sting\nB. poison\nC. sense light\nD. move\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: In order to grow a rosebush needs a specific\nChoices:\nA. gardener\nB. house\nC. climate\nD. fertilizer\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: From which distance will an object look the biggest?\nChoices:\nA. 4 feet\nB. 30 feet\nC. 1 kilometer\nD. 1 mile\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which does not support living things and is not a home to living things?\nChoices:\nA. carpet\nB. field\nC. forest\nD. grassland\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: The Grand Canyon became so deep and large because\nChoices:\nA. water sources are there\nB. rivers are around it\nC. water is really strong\nD. rushing water eroded it\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Heat can can cause matter to\nChoices:\nA. shift phases\nB. become intelligent\nC. multiply\nD. disappear\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A chipmunk that gathers many different items can often store what for later usage and help with plant dispersal.\nChoices:\nA. hair balls\nB. water\nC. small leaves\nD. uneaten pits\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A young boy decides that he likes dogs better than he likes cats. A reason for this may be that\nChoices:\nA. his dogs are cats\nB. his parents only have dogs\nC. his parents hate dogs\nD. his parents are cats\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A girl is turning sixteen and is experiencing changes to her breasts and other areas as she matures. These changes as she enters adulthood signify\nChoices:\nA. procreative adjustments\nB. cohesive ability\nC. coherent reduction\nD. reductive properties\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: When you heat liquids, what happens to it's ability to break down solids?\nChoices:\nA. nothing significant\nB. it enhances it\nC. it lessens it\nD. it stops\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If you wanted to be outside in the daylight for the longest period when would be worst?\nChoices:\nA. June\nB. January\nC. April\nD. August\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A rock may be used as a shelter by a\nChoices:\nA. chicken\nB. spider\nC. giant squid\nD. deer\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What season includes the last month of the year in the southern hemisphere?\nChoices:\nA. winter\nB. summer\nC. spring\nD. fall\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Absorbing sunlight\nChoices:\nA. leaves objects too frosty to handle\nB. makes car hoods cool to the touch\nC. leaves surfaces and objects unaffected\nD. makes the asphalt scorching to bare feet\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: An anemometer would get a work out on a\nChoices:\nA. still afternoon\nB. cloudy day\nC. rainy day\nD. blustery day\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What heavenly object is closer to the planet where the TV was invented?\nChoices:\nA. Jupiter\nB. Moon\nC. Sun\nD. Saturn\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A litter of healthy cubs are born to a lioness, and eventually one of the cubs has a cut on its paw. It is reasonable to assume\nChoices:\nA. the lioness has a cut paw\nB. the cut paw was inherited\nC. all cubs will have cut paws\nD. the cut paw was acquired\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: careless handling of chemicals can lead to one of the following\nChoices:\nA. Chemical splashing accidents\nB. chemical composition making\nC. chemical modifications accidents\nD. chemical formation making\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which is a function of the skeletal system?\nChoices:\nA. Digestion\nB. Breathing\nC. Thinking\nD. Chewing\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What season is December in the southern hemisphere?\nChoices:\nA. when snow starts to fall\nB. when the weather gets hot and dry\nC. when the flowers start to bloom\nD. when the trees change colors\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If someone is allergic to sunlight then the place they need to avoid is\nChoices:\nA. libraries\nB. gazebo\nC. buildings\nD. underwater\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: After spring ends, the next time it will be spring is\nChoices:\nA. next month\nB. next decade\nC. next week\nD. next year\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A scale is necessary to determine\nChoices:\nA. BMI\nB. CNA\nC. DNA\nD. XFL\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A plant's stem\nChoices:\nA. supplies only the roots with water and nutrients\nB. supplies carbon dioxide through the root system\nC. acts as the lungs for the plant\nD. acts as the subway delivering it's water and nutrient passengers to the rest of the plant\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: In a bowl of water with the sun shining on it, what happens to the water after four hours?\nChoices:\nA. the water is growing algae\nB. there is less water\nC. the water is dirty\nD. there is more water\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A stone may experience the most weathering over\nChoices:\nA. a week\nB. a year\nC. a century\nD. a decade\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Brackish water is often found where\nChoices:\nA. a sea is large\nB. the ocean is deep\nC. several large rivers meet\nD. a river cuts through a canyon\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A wooden floor will be easier to slide a chair over than a carpeted floor will be because a wooden floor\nChoices:\nA. has dry friction\nB. has enormous friction\nC. has less roughness\nD. has more texture\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: The cell membrane keeps a cell from\nChoices:\nA. replicating\nB. getting lost\nC. falling apart\nD. running away\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A bear that ate a watermelon will also travel during the day to several areas of the surrounding forest, which can cause?\nChoices:\nA. food for young\nB. dispersal of seed\nC. bears\nD. seed production\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: White blood cells\nChoices:\nA. act as transporters of nutrients\nB. act as transporters of neurons\nC. take action against agents of disease\nD. defend the body from sunlight\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: If a lawnmower runs over an anthill, the colony's population probably\nChoices:\nA. stagnates\nB. increases\nC. decreases\nD. doubles\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Eating certain foods can add fiber into a diet which helps the body to stay regular, such as when eating\nChoices:\nA. multivitamins\nB. fish\nC. crackers\nD. broccoli\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Some creatures can bring in prey by providing a source of light, such as\nChoices:\nA. Lophiiformes\nB. giant squid\nC. sharks\nD. crawfish\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: AIDS destroys the body by helping\nChoices:\nA. antigens\nB. pathogens\nC. organs\nD. bone\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A celestial body grows a few meters in size every year, and the mass increases as well. After a hundred years, the celestial body will\nChoices:\nA. repel the sun\nB. have stronger gravity\nC. attract the sun\nD. have weaker gravity\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A scale can\nChoices:\nA. give an estimate of a dog's age\nB. measure how long a dog is\nC. let you know if the dog needs to lose a few pounds\nD. make an educated guess about a dog's breed\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Knowing the formula for speed\nChoices:\nA. would aid in calculating road time needed to reach a destination\nB. would aid in calculating weight of the car\nC. would aid in figuring out traffic congestion patterns\nD. would aid in using a map\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: The respiratory system allows the body to\nChoices:\nA. intake carbon dioxide into the blood from the air\nB. oxygenate blood from the air\nC. combine oxygen and carbon dioxide in the blood\nD. remove oxygen from the blood\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: All natural resources come from nature such as\nChoices:\nA. cats coming from shelters\nB. cake coming from bakers\nC. money coming from the government\nD. moisture coming from oceans\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: To burn away the darkness, even a tiny light will do, such as\nChoices:\nA. a small smile from a friend\nB. a little feeling of hope\nC. a small voice in the dark\nD. a dark wick being touched by a match\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: if a ball on the beach bursts, what would most likely escape?\nChoices:\nA. the fishes on the shore\nB. none of these\nC. the sharks in it\nD. the gaseous content in it\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Leaves play a role in the making of\nChoices:\nA. carbon dioxide for humans to breathe\nB. the chemicals needed to make table salt\nC. helium for party balloons\nD. a life sustaining element humans need\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A stately red maple in a dense forest is supported by its\nChoices:\nA. pine needles\nB. trunk\nC. leaves\nD. upward thrust\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: One source of pollution are\nChoices:\nA. recycling bins\nB. green ways\nC. trash heaps\nD. natural streams\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: nonrenewable resources include all but\nChoices:\nA. coal\nB. sunlight\nC. oil\nD. natural gas\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A full moon is caused by\nChoices:\nA. werewolves\nB. moonlight\nC. tides\nD. orbiting\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A man is teaching his daughter to ride a bike. He emphasizes the need for her feet to remain on the pedals, so that\nChoices:\nA. the bike is fun\nB. the bike propels forward\nC. the bike hold still\nD. the bike is pink\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Crop rotation\nChoices:\nA. allows loam to replenish its nutrient supply\nB. hurts the overall crop reap\nC. allows farmers to take a break\nD. prevents fertilizer from working\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Someday, the ground under the pile of rotting grain in the field will be\nChoices:\nA. barren\nB. a hole\nC. more fertile\nD. less fertile\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: In what way do mice come into the world?\nChoices:\nA. by surgical interference by veterinarians\nB. through a thick shell\nC. through a muscular canal\nD. digging upwards through sand\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Pouring lemon juice into water\nChoices:\nA. flavors milk with lemons\nB. creates a beverage lemon flavored\nC. is mostly water still\nD. uses only real lemons\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If a road is bumpy and another road is smooth, the bumpier road\nChoices:\nA. will be lower than the smooth road\nB. will be longer than the smooth road\nC. will be rough on tires\nD. will have cars driving quickly\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Shelter can protect humans from\nChoices:\nA. space\nB. aging\nC. time\nD. catastrophic natural events\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Tree rings can\nChoices:\nA. indicate how often the tree needs pruning\nB. tell you what year a tree was planted\nC. tell you how tall a tree is\nD. indicate the year the tree will die\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: what do animals need to protect them from bad weather?\nChoices:\nA. housing\nB. food\nC. water\nD. clothing\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Roses are propped up by\nChoices:\nA. green structures that grow from concrete\nB. green structures that grow from brick\nC. green structures that fall from the sky\nD. green structures that rise from the ground\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: resources other than manmade can only be found on\nChoices:\nA. a laboratory\nB. your home\nC. the moon\nD. our planet\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A way to tell if a rock could possibly hold Fe inside is to\nChoices:\nA. hover a magnet over it\nB. take the rock home\nC. ask someone at school\nD. look at it closely\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: The black bear in Alaska is known for hunting this type of feast\nChoices:\nA. moose\nB. sasquatch\nC. fish\nD. elk\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Draining the rain with a rain gutter onto bare ground through a spout will\nChoices:\nA. make the ground underneath contain less soil\nB. attract more dirt to where the water is falling\nC. cause the ground to become very hard\nD. draw up more water from underground\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: on which of these does a ball fall faster from a height?\nChoices:\nA. our world\nB. on the moon\nC. on pluto\nD. none of these\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A storm is coming and dark clouds are rolling in, which were formed after\nChoices:\nA. fluid was drawn from the air\nB. rain was drawn on a sheet\nC. water was wet in the future\nD. people drew rain storms\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Animals of the Arctic thrive in\nChoices:\nA. Tropical Environment\nB. Warm Climates\nC. Water Environments\nD. Snow Environment\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Keeping your fast food bags in the car until you get home instead of throwing them out the window is an example of protecting the\nChoices:\nA. Car\nB. environment\nC. Restaurant\nD. people\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: National parks\nChoices:\nA. allow unlimited hunting of endangered species\nB. are full of pollution\nC. get very few visitors on a yearly basis\nD. take measures to protect their animal populations\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Using trash in the way it was used in the last scene of the 'Back to the Future' movie is, most ideally, an example of:\nChoices:\nA. creative filming\nB. an alternative fuel\nC. wishful thinking\nD. cleaning the environment\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Water boiling in a pot on a stove is an example of\nChoices:\nA. electrocution\nB. freezing\nC. hydroplaning\nD. thermal conduction\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: The ground moving when the atomic bombs landed is similar to?\nChoices:\nA. earthquake\nB. world war\nC. geyser spout\nD. volcano\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What do animals do if their habitat cannot support them?\nChoices:\nA. fertilize the habitat\nB. fortify area\nC. abandon it\nD. stay in area\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What offers a tree with stability and a way to distribute nutrients throughout the plant?\nChoices:\nA. sap\nB. leaves\nC. fruit\nD. trunk\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: For what does a stove generally generate heat?\nChoices:\nA. warming the air in the area\nB. heating nutrients to appropriate temperatures\nC. entertaining various visitors and guests\nD. to create electrical charges\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A running car engine could\nChoices:\nA. leave the hood hot to the touch\nB. cause the trunk to pop open\nC. leave the hood cold to the touch\nD. cause the car doors to spring open\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Standing near a campfire\nChoices:\nA. will leave you shivering\nB. will keep you toasty\nC. will make it difficult to see in the dark\nD. will cool you down\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Each of the moon's phases usually occurs once per\nChoices:\nA. week\nB. day\nC. 30 days\nD. year\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What is an example of an animal needing warmth for survival?\nChoices:\nA. a deer nestled into long grass\nB. a rabbit hopping through the snow\nC. a bat catching a mosquito\nD. a dog eating from a dish\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: As an herbivore, deers will eat\nChoices:\nA. Meat\nB. Chicken\nC. Tires\nD. A bush\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: How many minutes are in a 24 hour day?\nChoices:\nA. 24\nB. 1440\nC. 2400\nD. 240\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: The moon is what to the earth?\nChoices:\nA. the largest star in the sky\nB. the brightest celestial object\nC. the closest body in in space\nD. the biggest thing in the universe\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: which of these would lead to a rise in speed and acceleration?\nChoices:\nA. a person running behind and kicking a balloon\nB. a person sitting still\nC. a person standing in place\nD. a person stopping an oncoming ball\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Weathering is\nChoices:\nA. wheat growing in a field\nB. peat moss growing on river rocks\nC. air plants growing in a shell\nD. a dandelion growing thru a line in asphalt\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: which of these people will have the best sight while driving to work?\nChoices:\nA. a person driving in the blizzard\nB. a person driving in the night\nC. a person in the spring morning\nD. a person driving in the rain\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A drop off in predator population\nChoices:\nA. indicates a boom in animal reproduction\nB. can indicate a drop off in frigid temperatures\nC. indicates plentiful amounts of water\nD. can indicate a nutrient insufficient environment\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Some plants are easy for hummingbirds to sip nectar from. While the hummingbirds are taking nectar, the plants also gain something, which is\nChoices:\nA. bird friends\nB. more nectar\nC. extra food\nD. a pollinator\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Protect the environment by\nChoices:\nA. using more water\nB. using more packaging\nC. using less renewables\nD. using less hairspray\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A flashlight works because the batteries inside of it produce chemical energy that\nChoices:\nA. makes the lights bright\nB. burn into the plastic\nC. is transferred to another type\nD. lights up a room\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: If I wanted to gain energy I could\nChoices:\nA. Brush my hair\nB. Consume an apple\nC. Wash my face\nD. Go running\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If it is dark outside it is hard to see an object because it there is no\nChoices:\nA. objects\nB. sight\nC. movement\nD. light\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Electricity can flow as long as it has a conductor to help it along, such as\nChoices:\nA. nickel earrings\nB. cardboard paperclips\nC. wooden bowls\nD. rubber soles\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which animal has the best camouflage in the Sahara?\nChoices:\nA. a koala bear\nB. a horned viper\nC. Gyrfalcon\nD. a sloth\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Magnetism can cause\nChoices:\nA. How to Swim\nB. Radiation isotope creation\nC. Head to Rotate\nD. Clouds to Move\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: panting is the equivalent to humans\nChoices:\nA. begging for water constantly\nB. crying for hours on end\nC. drowning in a small puddle\nD. expelling water from their dermis\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: The sun appears to move because of the rotation of a\nChoices:\nA. star\nB. moon\nC. sun\nD. planet\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: I need what to calculate the length from my big toe to my little toe?\nChoices:\nA. Calculator\nB. Tape Measure\nC. A Graph\nD. A Microscope\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A leaf falling from a tree means\nChoices:\nA. I should wear a coat\nB. I should wear a tank top\nC. I should wear sandals\nD. I should go to the beach\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A material that can be burned to produce electricity can be made from\nChoices:\nA. water\nB. air\nC. electronics\nD. algae\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Sowing plants native to an ecosystem\nChoices:\nA. is a useless action\nB. is a harmful action\nC. is a worthwhile action\nD. is a neutral action\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: The world changes over time, and an example of this could be\nChoices:\nA. sand covering a beach front\nB. a lake hosting hundreds of fish\nC. cities buried under lava rock\nD. seas having saltwater in them\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A swordbill is able to drink from long, narrow flowers where other birds are unable to because of\nChoices:\nA. the flower pushes them away\nB. the swordbill's skill at drinking\nC. genetic advantage of swordbills\nD. lack of experience in pollinating\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: If you had a telescope what is something meant to be viewed by it?\nChoices:\nA. Greater Pewee\nB. Vibrio\nC. Alcor\nD. Heisenberg\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: An electron microscope can\nChoices:\nA. move small magnets around\nB. create completed replicas of animals\nC. burn plastic with ease\nD. recreate an entire image\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: This is a rarely used way to produce electricity.\nChoices:\nA. tidal energy\nB. wind energy\nC. solar power\nD. hydroelectric power\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A substance people use for writing also helps an animal deal with\nChoices:\nA. food\nB. human activity\nC. predators\nD. climate change\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Where might you find a gecko?\nChoices:\nA. South Pole\nB. Antartica\nC. Ross Ice Shelf\nD. Ecuador\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: by congregating together a collection of organisms chances of survival\nChoices:\nA. decreases\nB. raises\nC. stops\nD. stays the same\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Insects are eaten by\nChoices:\nA. dogs\nB. lizard-like amphibians\nC. flies\nD. cats\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Rabbits consume\nChoices:\nA. verdant organisms that grow from the ground\nB. verdant fish that swim through the sea\nC. verdant monkeys that swing from the trees\nD. verdant animals that fly from the sky\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Beaches are harmed\nChoices:\nA. when beach goers leave behind detritus on the sand\nB. when turtles lay their eggs\nC. when children play in the ocean\nD. when seagulls nest in dunes\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: which of these could lead to the introduction of new plant species to a place?\nChoices:\nA. a botanist introducing them\nB. a dog traveling through a field\nC. a farmer introducing them\nD. all the mentioned options\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A man is building a cabin in a forested area that receives a lot of snow in the winter. The man would like the cabin to retain heat in the winter so that the cabin stays warm and that it is inexpensive to heat. In order to facilitate this desire, the man lines the walls of his cabin with\nChoices:\nA. thermal insulator\nB. glass\nC. thermal gravity\nD. hard plastic\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: To travel in an environmentally friendly way\nChoices:\nA. drive a gas guzzling truck\nB. take a coal powered train\nC. use a two wheel human-powered vehicle\nD. drive a car with a leaky gas tank\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Chemical changes can occur when\nChoices:\nA. plastic is used for eating utensils\nB. oxygen circulates in a vacuum chamber\nC. H2O is exposed to air\nD. Na is added to Cl\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What is an example of friction occurring?\nChoices:\nA. there is more resistance driving on gravel than on concrete\nB. a person thinks a thought\nC. an apple falls to the ground from a tree\nD. a spring bounces back and forth\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What animal will have the least pressure on it\nChoices:\nA. a fish at the bottom of the ocean\nB. a salmon swimming just under the surface of river\nC. a cat running down a street\nD. a falcon flying above a peak\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Deer often live near\nChoices:\nA. lions\nB. crocodiles\nC. log cabins\nD. polar bears\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What is formed by water evaporating from a solution of water and minerals?\nChoices:\nA. shale\nB. pants\nC. food\nD. glass\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Volume can indicate\nChoices:\nA. how an object reacts to heat\nB. whether an object is expansive\nC. how an object smells\nD. the state of matter of an object\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What does tearing do to a whole?\nChoices:\nA. it neutralizes the whole\nB. it takes it apart\nC. it enlarges the whole\nD. it puts it together\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: humans can taste flavors, and so can\nChoices:\nA. insects\nB. marsupials\nC. trees\nD. cockroaches\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A man grows flowers in the winter using his greenhouse. The flowers blossom there, despite the cold, freezing weather and lack of sunshine, because\nChoices:\nA. they are regularly chilled\nB. they are given salt\nC. they are carefully protected\nD. they are told to\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Coral can be found in\nChoices:\nA. ponds in local communities\nB. the rivers in mid-America\nC. streams in the Arctic\nD. tepid waters of the Atlantic\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Switching on a light can complete an electrical circuit, which may\nChoices:\nA. brighten a room\nB. turn off fans\nC. close a door\nD. use a flashlight\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Large fins\nChoices:\nA. speeds up eating time\nB. slows down swimming pace\nC. improve appearance of fish\nD. allows for brisker movements\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Which of these is a solution?\nChoices:\nA. milk\nB. coke\nC. water\nD. clouds\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: why must a cell delegate its essential functionalities?\nChoices:\nA. all of these\nB. to maximize work distribution\nC. to avoid extra work\nD. to catch its prey\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: On the moon people are pulled down\nChoices:\nA. the same\nB. more\nC. unpredictably\nD. less\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: It is possible to renew\nChoices:\nA. sunflowers\nB. oil\nC. steel\nD. stones\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Grey clouds often appear before\nChoices:\nA. hail\nB. heat\nC. wind\nD. humidity\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A refraction of light that splits into all different colors often occurs after\nChoices:\nA. clouds\nB. rain\nC. heat\nD. earthquakes\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Acid rain may effect things in ways such as\nChoices:\nA. causing grass to grow greener\nB. creating craters in mountains\nC. turning city streets to slush\nD. marine life becomes inedible\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: When hurricanes move over land, the hurricane does what?\nChoices:\nA. speeds up a considerate amount\nB. stops almost at once\nC. gains a lot of strength\nD. loses capacity to withstand great force or pressure\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: If you add heat to something, a chemical reaction may take place, like when\nChoices:\nA. ingredients are mixed in a bowl\nB. coffee is warmed in a microwave\nC. mixed ingredients become a cupcake\nD. pasta is warmed on a stove\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What does a skunk produce?\nChoices:\nA. carbonated water with bubbles\nB. x-rays made from radiation\nC. sulfur-containing analog of an alcohol\nD. ammonia containing some liquid\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: In which situation would an animal shed fur?\nChoices:\nA. It is angry\nB. It is hot\nC. It is cold\nD. It is happy\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If seeds stick to the coat of an animal they can be?\nChoices:\nA. stored\nB. transported\nC. eaten\nD. germinated\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: White blood cells\nChoices:\nA. encourage pathogen growth\nB. increase pathogen production\nC. obliterate pathogens\nD. join with pathogens\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A thermal conductor may conduct energy from\nChoices:\nA. ice\nB. stone\nC. sunshine\nD. fabric\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Pulse accelerates\nChoices:\nA. when cooling down after a work out\nB. when running pace increases\nC. when running pace slows\nD. when entering into a sleep state\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Bicycle riding is nearly unique to certain species such as\nChoices:\nA. dolphins\nB. human beings\nC. dogs\nD. small squirrels\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: A species that has only 1 living member\nChoices:\nA. has already become extinct\nB. can reproduce through asexual reproduction\nC. is on the verge of extinction\nD. should be preserved in a museum\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Springtime with animals can mean:\nChoices:\nA. thicker fur on the animal\nB. less hair on the furniture\nC. lighter colored fur on the animal.\nD. more hair on the furniture\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: migration is when animals travel from the northern most state to Texas during what segment of time?\nChoices:\nA. birds\nB. spring\nC. lake fronts\nD. winter\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Transpiration can contribute to\nChoices:\nA. animals\nB. rain\nC. wind\nD. flowers\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Smoothing will occur\nChoices:\nA. if two pebbles rub together over long periods of time\nB. if an abrasive is rubbed against cement\nC. if flint is struck against stone\nD. if bricks are thrown at each other\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: Which shows a change from potential energy to kinetic energy?\nChoices:\nA. a tree growing fruit\nB. a rock sitting still\nC. a person climbing a mountain\nD. an orange dropping from a tree\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: The type of climate change known as anthropogenic is caused by this:\nChoices:\nA. humanity\nB. volcanic activity\nC. increased sunlight\nD. forest fires\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What is one thing cloud precipitation can be?\nChoices:\nA. a thunder boom\nB. a liquid fire\nC. unfavorable weather outlook\nD. none of these\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Clouds are\nChoices:\nA. Grass\nB. The color green\nC. Quiet heavy\nD. Bricks\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Birds reproduce using\nChoices:\nA. live birth\nB. cloning.\nC. eggs\nD. mitosis\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: which of these is more similar to electric particles behavior?\nChoices:\nA. cars traveling on a highway\nB. both of the above\nC. cars parked in a parking lot\nD. cars in a garage\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What comes directly from the source?\nChoices:\nA. Plastic\nB. Denim\nC. Lumber\nD. White sugar\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: deserts are known for having what type of climates?\nChoices:\nA. comfortable\nB. moderate\nC. freezing\nD. scorching\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: To experience evaporation you can\nChoices:\nA. Pour water into a lake\nB. Run water in a facet\nC. Put plastic over a plant\nD. Watch the rain fall\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: A flashlight emits\nChoices:\nA. particles\nB. water\nC. bugs\nD. sound\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: When the Earth's Northern axis is tilted away from the Sun the amount of daylight is\nChoices:\nA. brighter\nB. lengthened\nC. shortened\nD. turned back\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: Where is the sun located at 12:00 PM?\nChoices:\nA. the south\nB. overhead\nC. below\nD. the north\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: We made sure to use the hose on the begonia daily so it would\nChoices:\nA. melt\nB. survive\nC. die\nD. freeze.\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: Squirrels are seed dispersers because\nChoices:\nA. they bury their food\nB. they prefer to eat acorns\nC. squirrels live in trees\nD. they eat lots of nuts\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: What type of human diet would be most comparable to a cow\nChoices:\nA. Pescaterian\nB. Vegan\nC. Atkins Diet\nD. Omnivore\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: which of these individuals would be more healthy?\nChoices:\nA. a student who sleeps two hours daily\nB. a teacher who sleeps eight hours a day\nC. a woman who sleeps three hours a day\nD. a man who practices sleep deprivation\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: pushing against a rolling boulder will decrease its\nChoices:\nA. size\nB. height\nC. impetus\nD. ambitions\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: In a desert area plants grow\nChoices:\nA. underwater\nB. closer together\nC. in lines\nD. farther apart\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: what is one use for a radio\nChoices:\nA. sending light signals\nB. sending goods\nC. none of these\nD. transferring signals\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: If something good is increased, survival of organisms needing it increase, such as when\nChoices:\nA. cars get food\nB. kittens get yarn\nC. babies get toys\nD. amoeba get nutrients\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Turning beef from red to brown requires energy from\nChoices:\nA. heat\nB. sound\nC. color\nD. light\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A person is travelling and needs to know how much further to go, so for the remainder of the trip, he is\nChoices:\nA. distance in millimeters\nB. noting in meters\nC. using square feet\nD. measuring with inches\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: What is the earth's surface made of?\nChoices:\nA. Grass\nB. Asphalt\nC. Water\nD. Aggregate minerals\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: A plant can germinate in another place when a person rubs against its\nChoices:\nA. flowers\nB. roots\nC. leaves\nD. stems\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A frog reproduces with some other frogs, then watches over the potential offspring which are\nChoices:\nA. born life and moving\nB. floating in outer space\nC. resting in sacs on leaves\nD. melted in the rain\nAnswer:",
+    "input": "",
+    "output": "C"
+  },
+  {
+    "instruction": "Question: What room in a house would signify the excretory system?\nChoices:\nA. dining room\nB. bathroom\nC. living room\nD. kitchen\nAnswer:",
+    "input": "",
+    "output": "B"
+  },
+  {
+    "instruction": "Question: If a tree burns down, it can be made right by\nChoices:\nA. buying a plastic tree\nB. visiting a rain forest\nC. reading about it in the paper\nD. placing seed in dirt\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: What role does the first step in the food chain have?\nChoices:\nA. secondary consumer\nB. decomposer\nC. consumer\nD. producer\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Water at 50 degree  C is\nChoices:\nA. equally distant from the melting and boiling points\nB. closer to the boiling point of water\nC. closer to the melting point of ice\nD. below the melting point of ice\nAnswer:",
+    "input": "",
+    "output": "A"
+  },
+  {
+    "instruction": "Question: A phase change is\nChoices:\nA. Growing a plant\nB. Building a car\nC. Water changing temperatures\nD. Jello's transformation\nAnswer:",
+    "input": "",
+    "output": "D"
+  },
+  {
+    "instruction": "Question: Owls spend their nights\nChoices:\nA. tending to their homes\nB. sleeping in hollow logs\nC. scanning their territory for field mice\nD. hanging out with other owls\nAnswer:",
+    "input": "",
+    "output": "C"
+  }
+]
