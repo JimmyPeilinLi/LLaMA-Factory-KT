@@ -24,7 +24,7 @@ It handles:
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
-from transformers import Trainer
+from transformers import Trainer, TrainerCallback
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from transformers.trainer_pt_utils import get_parameter_names
 from typing_extensions import override
@@ -281,9 +281,6 @@ class KTrainer(CustomSeq2SeqTrainer):
         """
         Perform a training step.
 
-        This overrides the parent method to update LoRA weight pointers
-        after optimizer.step() in TP mode.
-
         Args:
             model: The model to train
             inputs: The inputs and targets of the model
@@ -293,18 +290,7 @@ class KTrainer(CustomSeq2SeqTrainer):
             The training loss
         """
         loss = super().training_step(model, inputs, num_items_in_batch)
-
-
-        # In TP mode, update LoRA weight pointers after gradient is computed
-        # Note: The actual pointer update happens after optimizer.step() in _inner_training_loop
-        # This is handled by the callback below
-
         return loss
-
-    # NOTE: _update_lora_pointers is no longer needed after optimizer.step()
-    # PyTorch optimizers use in-place updates, so tensor storage addresses don't change.
-    # LoRA pointer updates are only needed after _apply (model.to(), etc.), which is
-    # handled by the dirty flag mechanism in KTMoELayerWrapper.
 
     @override
     def save_model(self, output_dir: Optional[str] = None, _internal_call: bool = False):
@@ -330,6 +316,17 @@ class KTrainer(CustomSeq2SeqTrainer):
             from ...model.model_utils.kt_moe import save_kt_moe_to_adapter
             save_kt_moe_to_adapter(self.model, output_dir)
             logger.info_rank0(f"Saved KT MoE weights to {output_dir}")
+
+
+class _KTLoRAPointerCallback(TrainerCallback):
+    def __init__(self, model: "torch.nn.Module"):
+        self.model = model
+
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        if getattr(self.model, "_kt_use_lora_experts", False):
+            return
+        from ...model.model_utils.kt_moe import update_kt_lora_pointers
+        update_kt_lora_pointers(self.model)
 
 
 def create_kt_trainer(
@@ -369,8 +366,8 @@ def create_kt_trainer(
         **kwargs,
     )
 
-    # NOTE: No longer need callback for LoRA pointer updates after optimizer.step()
-    # PyTorch optimizers use in-place updates, tensor addresses don't change.
-    # Pointer updates are handled by dirty flag in KTMoELayerWrapper._apply()
+    if getattr(model, "_kt_wrappers", None) is not None and not getattr(model, "_kt_use_lora_experts", False):
+        trainer.add_callback(_KTLoRAPointerCallback(model))
+        logger.info_rank0("Added KT LoRA pointer update callback (on_optimizer_step)")
 
     return trainer
