@@ -619,7 +619,7 @@ class KTMoEFunction(torch.autograd.Function):
         def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
             grad_on_device = grad.to(param.device, dtype=param.dtype)
             if param.grad is None:
-                param.grad = grad_on_device.clone()
+                param.grad = grad_on_device
             else:
                 param.grad.add_(grad_on_device)
 
