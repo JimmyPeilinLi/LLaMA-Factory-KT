@@ -94,23 +94,31 @@ class KTrainer(CustomSeq2SeqTrainer):
 
         for wrapper in self._kt_wrappers:
             if wrapper.lora_params is not None:
-                self._moe_lora_params.extend(wrapper.lora_params.values())
+                trainable_lora_params = [p for p in wrapper.lora_params.values() if p.requires_grad]
+                self._moe_lora_params.extend(trainable_lora_params)
             if wrapper.lora_experts is not None:
                 self._lora_expert_params.extend(wrapper.lora_experts.parameters())
 
         if self._kt_wrappers:
-            if self._kt_use_lora_experts:
-                logger.info_rank0(
-                    f"KT Trainer initialized with {len(self._kt_wrappers)} MoE layers, "
-                    f"{len(self._lora_expert_params)} LoRA Expert parameters (LoRA Experts mode), "
-                    f"TP mode: {self._kt_tp_enabled}"
-                )
+            has_moe_lora = len(self._moe_lora_params) > 0
+            has_lora_experts = len(self._lora_expert_params) > 0
+
+            if has_moe_lora and has_lora_experts:
+                mode_str = "LoRA Experts + LoRA (both trained)"
+            elif has_lora_experts:
+                mode_str = "LoRA Experts + SkipLoRA (only LoRA Experts trained)"
+            elif has_moe_lora:
+                mode_str = "Normal LoRA (per-expert LoRA trained)"
             else:
-                logger.info_rank0(
-                    f"KT Trainer initialized with {len(self._kt_wrappers)} MoE layers, "
-                    f"{len(self._moe_lora_params)} MoE LoRA parameters (per-expert LoRA mode), "
-                    f"TP mode: {self._kt_tp_enabled}"
-                )
+                mode_str = "SkipLoRA (MoE frozen)"
+
+            logger.info_rank0(
+                f"KT Trainer initialized with {len(self._kt_wrappers)} MoE layers, "
+                f"mode={mode_str}, "
+                f"moe_lora_params={len(self._moe_lora_params)}, "
+                f"lora_expert_params={len(self._lora_expert_params)}, "
+                f"TP mode: {self._kt_tp_enabled}"
+            )
 
         # Disable cache for training
         self.model.config.use_cache = False
@@ -323,8 +331,6 @@ class _KTLoRAPointerCallback(TrainerCallback):
         self.model = model
 
     def on_optimizer_step(self, args, state, control, **kwargs):
-        if getattr(self.model, "_kt_use_lora_experts", False):
-            return
         from ...model.model_utils.kt_moe import update_kt_lora_pointers
         update_kt_lora_pointers(self.model)
 
@@ -366,7 +372,10 @@ def create_kt_trainer(
         **kwargs,
     )
 
-    if getattr(model, "_kt_wrappers", None) is not None and not getattr(model, "_kt_use_lora_experts", False):
+    # Add LoRA pointer callback if per-expert LoRA is trainable (Mode 1 or Mode 3)
+    # Mode 1: Normal LoRA - per-expert LoRA trained
+    # Mode 3: LoRA Experts + LoRA - both per-expert LoRA and LoRA Experts trained
+    if trainer._moe_lora_params:
         trainer.add_callback(_KTLoRAPointerCallback(model))
         logger.info_rank0("Added KT LoRA pointer update callback (on_optimizer_step)")
 

@@ -451,14 +451,15 @@ class LoRAExperts(nn.Module):
 # =============================================================================
 
 
-class KTMoEFrozenFunction(torch.autograd.Function):
+class KTMoEFunction(torch.autograd.Function):
     """
-    Custom autograd function for KTMoEWrapper forward with frozen experts (LoRA Experts mode).
+    Unified autograd function for KTMoE forward/backward.
 
-    This function:
-    - Computes forward pass through routed experts (with dummy LoRA)
-    - Computes backward to propagate gradients to hidden_states
-    - Does NOT update any LoRA gradients (they are frozen)
+    Handles all modes:
+    - train_lora=True: Accumulate LoRA gradients (Mode 1, 3)
+    - train_lora=False: Ignore LoRA gradients (Mode 2, 4)
+    - precomputed_output=None: Compute forward synchronously
+    - precomputed_output=Tensor: Use precomputed output (async overlap mode)
     """
 
     @staticmethod
@@ -468,118 +469,56 @@ class KTMoEFrozenFunction(torch.autograd.Function):
         topk_ids: torch.Tensor,
         topk_weights: torch.Tensor,
         wrapper: Any,
+        lora_params: dict[str, nn.Parameter] | None,
         hidden_size: int,
         num_experts_per_tok: int,
-        layer_idx: int = -1,
-    ) -> torch.Tensor:
-        """Forward pass with frozen experts."""
-        original_device = hidden_states.device
-        original_dtype = hidden_states.dtype
-        batch_size, seq_len, _ = hidden_states.shape
-
-        qlen = batch_size * seq_len
-        input_flat = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
-        expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
-        weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
-
-        # Forward with save_for_backward=True to enable gradient propagation
-        output = wrapper.forward_sft(
-            hidden_states=input_flat,
-            expert_ids=expert_ids,
-            weights=weights,
-            save_for_backward=True,  # Need this for backward gradient computation
-        )
-
-        ctx.wrapper = wrapper
-        ctx.hidden_size = hidden_size
-        ctx.qlen = qlen
-        ctx.batch_size = batch_size
-        ctx.seq_len = seq_len
-        ctx.original_device = original_device
-        ctx.original_dtype = original_dtype
-
-        output = output.view(batch_size, seq_len, hidden_size)
-        return output.to(device=original_device, dtype=original_dtype)
-
-    @staticmethod
-    def backward(ctx, grad_output: torch.Tensor):
-        """Backward pass - compute grad_hidden_states but ignore LoRA gradients."""
-        qlen = ctx.qlen
-        hidden_size = ctx.hidden_size
-
-        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
-
-        # Call wrapper's backward to get grad_input
-        # The grad_loras will be computed but we ignore them (frozen)
-        grad_input, _ = ctx.wrapper.backward(grad_output_flat)
-
-        grad_input = grad_input.view(ctx.batch_size, ctx.seq_len, hidden_size)
-        grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
-
-        # Return None for non-Tensor inputs
-        # forward args: hidden_states, topk_ids, topk_weights, wrapper, hidden_size, num_experts_per_tok, layer_idx
-        return grad_input, None, None, None, None, None, None
-
-
-class KTMoEFunction(torch.autograd.Function):
-    """
-    Custom autograd function for KTMoEWrapper forward/backward.
-
-    This bridges PyTorch autograd with kt-kernel's KTMoEWrapper implementation.
-    Uses the unified SFT interface (forward_sft, backward) instead of direct C++ calls.
-    """
-
-    @staticmethod
-    def forward(
-        ctx,
-        hidden_states: torch.Tensor,
-        topk_ids: torch.Tensor,
-        topk_weights: torch.Tensor,
-        wrapper: Any,  # BaseSFTMoEWrapper instance
-        lora_params: dict[str, nn.Parameter],
-        hidden_size: int,
-        num_experts_per_tok: int,
-        layer_idx: int = -1,
-        training: bool = True,
+        layer_idx: int,
+        training: bool,
+        train_lora: bool,
+        precomputed_output: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Forward pass using KTMoEWrapper.
 
         Args:
-            ctx: Autograd context
             hidden_states: Input tensor [batch, seq_len, hidden_size]
-            topk_ids: Expert indices from router [num_tokens, num_experts_per_tok]
-            topk_weights: Routing weights from router [num_tokens, num_experts_per_tok]
-            wrapper: BaseSFTMoEWrapper instance from KTMoEWrapper
-            lora_params: LoRA parameter dictionary
+            topk_ids: Expert indices from router
+            topk_weights: Routing weights from router
+            wrapper: BaseSFTMoEWrapper instance
+            lora_params: LoRA parameter dictionary (None for frozen mode)
             hidden_size: Hidden dimension
             num_experts_per_tok: Number of experts per token
             layer_idx: Layer index for debugging
-            training: Whether in training mode (save_for_backward=True) or inference (False)
+            training: Whether to save activations for backward
+            train_lora: Whether to accumulate LoRA gradients in backward
+            precomputed_output: Pre-computed output for async overlap mode (None = compute sync)
 
         Returns:
             Output tensor [batch, seq_len, hidden_size]
         """
-        # Save original device and dtype
         original_device = hidden_states.device
         original_dtype = hidden_states.dtype
         batch_size, seq_len, _ = hidden_states.shape
-
-        # Flatten inputs for wrapper
         qlen = batch_size * seq_len
-        input_flat = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
-        expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
-        weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
 
-        # Call wrapper's forward_sft
-        output = wrapper.forward_sft(
-            hidden_states=input_flat,
-            expert_ids=expert_ids,
-            weights=weights,
-            save_for_backward=training,
-        )
+        if precomputed_output is not None:
+            # Async overlap mode: output already computed, just pass through
+            output = precomputed_output
+        else:
+            # Sync mode: compute forward
+            input_flat = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
+            expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
+            weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
 
-        # Save for backward
+            cpu_output = wrapper.forward_sft(
+                hidden_states=input_flat,
+                expert_ids=expert_ids,
+                weights=weights,
+                save_for_backward=training,
+            )
+            output = cpu_output.view(batch_size, seq_len, hidden_size).to(device=original_device, dtype=original_dtype)
+
+        # Save context for backward
         ctx.wrapper = wrapper
         ctx.lora_params = lora_params
         ctx.hidden_size = hidden_size
@@ -589,24 +528,13 @@ class KTMoEFunction(torch.autograd.Function):
         ctx.original_device = original_device
         ctx.original_dtype = original_dtype
         ctx.layer_idx = layer_idx
+        ctx.train_lora = train_lora
 
-        # Reshape and return
-        output = output.view(batch_size, seq_len, hidden_size)
-        return output.to(device=original_device, dtype=original_dtype)
+        return output
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        """
-        Backward pass using KTMoEWrapper.
-
-        Args:
-            ctx: Autograd context
-            grad_output: Gradient from upstream [batch, seq_len, hidden_size]
-
-        Returns:
-            Tuple of gradients (grad_hidden_states, None, None, ...)
-        """
-        # Prepare grad_output
+        """Backward pass - compute grad_input and optionally accumulate LoRA gradients."""
         qlen = ctx.qlen
         hidden_size = ctx.hidden_size
 
@@ -615,88 +543,30 @@ class KTMoEFunction(torch.autograd.Function):
         # Call wrapper's backward
         grad_input, grad_loras, grad_weights = ctx.wrapper.backward(grad_output_flat)
 
-        # Accumulate LoRA gradients to Parameters
-        def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
-            grad_on_device = grad.to(param.device, dtype=param.dtype)
-            if param.grad is None:
-                param.grad = grad_on_device
-            else:
-                param.grad.add_(grad_on_device)
+        # Accumulate LoRA gradients only if training per-expert LoRA
+        if ctx.train_lora and ctx.lora_params is not None:
+            def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
+                grad_on_device = grad.to(param.device, dtype=param.dtype)
+                if param.grad is None:
+                    param.grad = grad_on_device
+                else:
+                    param.grad.add_(grad_on_device)
 
-        accumulate_grad(ctx.lora_params["gate_lora_a"], grad_loras["grad_gate_lora_a"])
-        accumulate_grad(ctx.lora_params["gate_lora_b"], grad_loras["grad_gate_lora_b"])
-        accumulate_grad(ctx.lora_params["up_lora_a"], grad_loras["grad_up_lora_a"])
-        accumulate_grad(ctx.lora_params["up_lora_b"], grad_loras["grad_up_lora_b"])
-        accumulate_grad(ctx.lora_params["down_lora_a"], grad_loras["grad_down_lora_a"])
-        accumulate_grad(ctx.lora_params["down_lora_b"], grad_loras["grad_down_lora_b"])
+            accumulate_grad(ctx.lora_params["gate_lora_a"], grad_loras["grad_gate_lora_a"])
+            accumulate_grad(ctx.lora_params["gate_lora_b"], grad_loras["grad_gate_lora_b"])
+            accumulate_grad(ctx.lora_params["up_lora_a"], grad_loras["grad_up_lora_a"])
+            accumulate_grad(ctx.lora_params["up_lora_b"], grad_loras["grad_up_lora_b"])
+            accumulate_grad(ctx.lora_params["down_lora_a"], grad_loras["grad_down_lora_a"])
+            accumulate_grad(ctx.lora_params["down_lora_b"], grad_loras["grad_down_lora_b"])
 
-        # Print abs-mean, max, and norm of accumulated LoRA gradients after backward for this layer.
-        # grad_pairs = [
-        #     ("grad_gate_lora_a", "gate_lora_a"),
-        #     ("grad_gate_lora_b", "gate_lora_b"),
-        #     ("grad_up_lora_a", "up_lora_a"),
-        #     ("grad_up_lora_b", "up_lora_b"),
-        #     ("grad_down_lora_a", "down_lora_a"),
-        #     ("grad_down_lora_b", "down_lora_b"),
-        # ]
-        # for grad_key, param_key in grad_pairs:
-        #     param = ctx.lora_params.get(param_key)
-        #     if param is None or param.grad is None:
-        #         continue
-        #     grad_fp32 = param.grad.detach().float()
-        #     grad_abs_mean = grad_fp32.abs().mean().item()
-        #     grad_abs_max = grad_fp32.abs().max().item()
-        #     grad_norm = grad_fp32.norm().item()
-        #     print(
-        #         "KT MoE grad stats "
-        #         f"(layer {ctx.layer_idx}, {grad_key}): "
-        #         f"abs_mean={grad_abs_mean:.6e} "
-        #         f"abs_max={grad_abs_max:.6e} "
-        #         f"norm={grad_norm:.6e}"
-        #     )
-
-        # # Print abs-mean, max, and norm of current LoRA parameters after backward for this layer.
-        # param_keys = [
-        #     "gate_lora_a",
-        #     "gate_lora_b",
-        #     "up_lora_a",
-        #     "up_lora_b",
-        #     "down_lora_a",
-        #     "down_lora_b",
-        # ]
-        # for key in param_keys:
-        #     param = ctx.lora_params.get(key)
-        #     if param is None:
-        #         continue
-        #     param_fp32 = param.detach().float()
-        #     param_abs_mean = param_fp32.abs().mean().item()
-        #     param_abs_max = param_fp32.abs().max().item()
-        #     param_norm = param_fp32.norm().item()
-        #     print(
-        #         "KT MoE param stats "
-        #         f"(layer {ctx.layer_idx}, {key}): "
-        #         f"abs_mean={param_abs_mean:.6e} "
-        #         f"abs_max={param_abs_max:.6e} "
-        #         f"norm={param_norm:.6e}"
-        #     )
-
-        # Reshape grad_input and return
+        # Reshape and convert grad_input
         grad_input = grad_input.view(ctx.batch_size, ctx.seq_len, hidden_size)
         grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
-
-        # # DEBUG: Check grad_input after conversion to original dtype
-        # grad_input_final_fp32 = grad_input.detach().float()
-        # print(f"[DEBUG L{ctx.layer_idx}] grad_input AFTER dtype conversion: "
-        #       f"dtype={grad_input.dtype}, device={grad_input.device}, "
-        #       f"abs_mean={grad_input_final_fp32.abs().mean().item():.6e}, "
-        #       f"abs_max={grad_input_final_fp32.abs().max().item():.6e}, "
-        #       f"norm={grad_input_final_fp32.norm().item():.6e}")
-
         grad_weights = grad_weights.to(device=ctx.original_device, dtype=ctx.original_dtype)
 
         # Return None for non-Tensor inputs
-        # forward args: hidden_states, topk_ids, topk_weights, wrapper, lora_params, hidden_size, num_experts_per_tok, layer_idx, training
-        return grad_input, None, grad_weights, None, None, None, None, None, None
+        # forward args: hidden_states, topk_ids, topk_weights, wrapper, lora_params, hidden_size, num_experts_per_tok, layer_idx, training, train_lora, precomputed_output
+        return grad_input, None, grad_weights, None, None, None, None, None, None, None, None
 
 
 # =============================================================================
@@ -822,11 +692,16 @@ class KTMoELayerWrapper(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass using KTMoEWrapper.
+        Forward pass using KTMoEWrapper with CPU/GPU overlap optimization.
 
-        Supports two modes:
-        1. Per-expert LoRA mode: Routed experts with per-expert LoRA on CPU AMX
-        2. LoRA Experts mode: Frozen routed experts + trainable LoRA Experts on GPU
+        Supports four modes (based on kt_backend and kt_use_lora_experts):
+        1. Normal LoRA: Per-expert LoRA trained (kt_backend=AMXINT8, no lora_experts)
+        2. SkipLoRA: MoE frozen, only Attention LoRA (kt_backend=AMXINT8_SkipLoRA, no lora_experts)
+        3. LoRA Experts + LoRA: Both trained (kt_backend=AMXINT8, with lora_experts)
+        4. LoRA Experts + SkipLoRA: Only LoRA Experts trained (kt_backend=AMXINT8_SkipLoRA, with lora_experts)
+
+        CPU/GPU Overlap: When shared_experts or lora_experts are present, the CPU MoE
+        computation runs in parallel with GPU computation for better throughput.
 
         Args:
             hidden_states: Input tensor [batch, seq_len, hidden_size]
@@ -834,89 +709,120 @@ class KTMoELayerWrapper(nn.Module):
         Returns:
             Output tensor [batch, seq_len, hidden_size]
         """
-        batch_size, seq_len, _ = hidden_states.shape
+        # 1. Compute routing
+        topk_ids, topk_weights = self._compute_routing(hidden_states)
 
-        # Get topk_ids and topk_weights based on router type
+        # 2. Determine mode flags
+        train_lora = self.lora_params is not None and any(
+            p.requires_grad for p in self.lora_params.values()
+        )
+        has_gpu_components = self.shared_experts is not None or self.lora_experts is not None
+        save_for_backward = self.training and torch.is_grad_enabled()
+
+        # 3. Update LoRA pointers if needed
+        if train_lora and self._lora_pointers_dirty:
+            self.update_lora_pointers()
+            self._lora_pointers_dirty = False
+
+        # 4. Compute MoE output (with or without overlap)
+        if has_gpu_components and save_for_backward:
+            moe_output = self._forward_with_overlap(hidden_states, topk_ids, topk_weights, train_lora)
+        else:
+            moe_output = KTMoEFunction.apply(
+                hidden_states, topk_ids, topk_weights,
+                self.wrapper,
+                dict(self.lora_params) if self.lora_params else None,
+                self.hidden_size, self.moe_config.num_experts_per_tok, self.layer_idx,
+                save_for_backward, train_lora, None,  # precomputed_output=None (sync mode)
+            )
+            # Add GPU components (no overlap in this path)
+            if self.shared_experts is not None:
+                moe_output = moe_output + self.shared_experts(hidden_states)
+            if self.lora_experts is not None:
+                moe_output = moe_output + self.lora_experts(hidden_states)
+
+        return moe_output
+
+    def _compute_routing(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute router output (topk_ids, topk_weights)."""
         if self.router_type == "deepseek_gate":
-            # DeepSeek router expects 3D input
             router_output = self.router(hidden_states)
             if len(router_output) == 2:
-                topk_ids, topk_weights = router_output
-            else:
-                topk_ids, topk_weights, _ = router_output  # Ignore aux_loss during inference
+                return router_output
+            return router_output[0], router_output[1]  # Ignore aux_loss
         else:
-            # Qwen/Mixtral router is nn.Linear, expects 2D input, returns raw logits
+            # Qwen/Mixtral router
             router_logits = self.router(hidden_states.view(-1, self.hidden_size))
-            # Manually apply softmax and topk
             routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float32)
             topk_weights, topk_ids = torch.topk(
                 routing_weights, self.moe_config.num_experts_per_tok, dim=-1
             )
             topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+            return topk_ids, topk_weights
 
-        # Apply MoE forward based on mode
-        if self.lora_experts is not None:
-            # LoRA Experts mode: frozen routed experts (with dummy LoRA) + LoRA Experts
-            moe_output = self._forward_frozen_experts(hidden_states, topk_ids, topk_weights)
-        else:
-            # Per-expert LoRA mode
-            # Only update LoRA pointers when dirty (after optimizer.step or initialization)
-            if self._lora_pointers_dirty:
-                self.update_lora_pointers()
-                self._lora_pointers_dirty = False
-            moe_output = KTMoEFunction.apply(
-                hidden_states,
-                topk_ids,
-                topk_weights,
-                self.wrapper,
-                dict(self.lora_params),
-                self.hidden_size,
-                self.moe_config.num_experts_per_tok,
-                self.layer_idx,
-                self.training and torch.is_grad_enabled(),  # save_for_backward: only save cache when training
-            )
-
-        # Handle shared experts if present
-        if self.shared_experts is not None:
-            shared_output = self.shared_experts(hidden_states)
-            moe_output = moe_output + shared_output
-
-        # Handle LoRA Experts if present
-        if self.lora_experts is not None:
-            lora_output = self.lora_experts(hidden_states)
-            moe_output = moe_output + lora_output
-
-        return moe_output
-
-    def _forward_frozen_experts(
+    def _forward_with_overlap(
         self,
         hidden_states: torch.Tensor,
         topk_ids: torch.Tensor,
         topk_weights: torch.Tensor,
+        train_lora: bool,
     ) -> torch.Tensor:
         """
-        Forward pass through routed experts with frozen dummy LoRA (for LoRA Experts mode).
+        Forward pass with CPU/GPU overlap optimization.
 
-        Uses KTMoEFrozenFunction to enable gradient propagation to hidden_states
-        while keeping the dummy LoRA parameters frozen.
+        Timeline:
+        1. Submit CPU MoE computation (non-blocking)
+        2. Run GPU components (shared_experts, lora_experts) in parallel
+        3. Sync CPU result
+        4. Combine results via autograd Function
 
         Args:
             hidden_states: Input tensor [batch, seq_len, hidden_size]
-            topk_ids: Expert indices from router [num_tokens, num_experts_per_tok]
-            topk_weights: Routing weights from router [num_tokens, num_experts_per_tok]
+            topk_ids: Expert indices from router
+            topk_weights: Routing weights from router
+            train_lora: Whether per-expert LoRA is being trained
 
         Returns:
-            Output tensor [batch, seq_len, hidden_size]
+            Combined output tensor [batch, seq_len, hidden_size]
         """
-        return KTMoEFrozenFunction.apply(
-            hidden_states,
-            topk_ids,
-            topk_weights,
+        batch_size, seq_len, _ = hidden_states.shape
+        original_device = hidden_states.device
+        original_dtype = hidden_states.dtype
+
+        # Step 1: Prepare and submit CPU computation (non-blocking)
+        qlen = batch_size * seq_len
+        input_flat = hidden_states.view(qlen, self.hidden_size).to(torch.bfloat16).cpu().contiguous()
+        expert_ids = topk_ids.view(qlen, self.moe_config.num_experts_per_tok).to(torch.int64).cpu().contiguous()
+        weights = topk_weights.view(qlen, self.moe_config.num_experts_per_tok).to(torch.float32).cpu().contiguous()
+
+        self.wrapper.submit_forward_sft(input_flat, expert_ids, weights, save_for_backward=True)
+
+        # Step 2: Run GPU components in parallel with CPU
+        gpu_output = None
+        if self.shared_experts is not None:
+            gpu_output = self.shared_experts(hidden_states)
+        if self.lora_experts is not None:
+            lora_out = self.lora_experts(hidden_states)
+            gpu_output = lora_out if gpu_output is None else gpu_output + lora_out
+
+        # Step 3: Sync CPU result
+        cpu_output = self.wrapper.sync_forward_sft()
+        cpu_output = cpu_output.view(batch_size, seq_len, self.hidden_size)
+        cpu_output_gpu = cpu_output.to(device=original_device, dtype=original_dtype)
+
+        # Step 4: Wrap in autograd for backward, then combine
+        moe_output = KTMoEFunction.apply(
+            hidden_states, topk_ids, topk_weights,
             self.wrapper,
-            self.hidden_size,
-            self.moe_config.num_experts_per_tok,
-            self.layer_idx,
+            dict(self.lora_params) if self.lora_params else None,
+            self.hidden_size, self.moe_config.num_experts_per_tok, self.layer_idx,
+            True, train_lora, cpu_output_gpu,  # precomputed_output for overlap mode
         )
+
+        if gpu_output is not None:
+            moe_output = moe_output + gpu_output
+
+        return moe_output
 
     def update_lora_pointers(self):
         """
@@ -986,12 +892,22 @@ def wrap_moe_layers_with_kt_wrapper(
     moe_layer_count = 0
 
     # Determine KT backend method
+    # Supports both regular SFT and SkipLoRA variants
     kt_backend_map = {
+        # Regular SFT backends (compute LoRA gradients)
         "AMXBF16": "AMXBF16_SFT",
         "AMXINT8": "AMXINT8_SFT",
         "AMXINT4": "AMXINT4_SFT",
+        # SkipLoRA backends (skip LoRA gradient computation, only compute grad_input)
+        "AMXBF16_SkipLoRA": "AMXBF16_SFT_SkipLoRA",
+        "AMXINT8_SkipLoRA": "AMXINT8_SFT_SkipLoRA",
+        "AMXINT4_SkipLoRA": "AMXINT4_SFT_SkipLoRA",
     }
     kt_method = kt_backend_map.get(model_args.kt_backend, "AMXBF16_SFT")
+
+    # Log if using SkipLoRA backend
+    if "SkipLoRA" in kt_method:
+        logger.info(f"Using SkipLoRA backend: {kt_method} (MoE LoRA gradients will be skipped)")
 
     # Determine threadpool_count for TP configuration
     threadpool_count = model_args.kt_threadpool_count if model_args.kt_tp_enabled else 1
@@ -1039,22 +955,11 @@ def wrap_moe_layers_with_kt_wrapper(
             down_proj = down_proj.cpu().to(torch.bfloat16).contiguous()
 
         # 2. Create LoRA parameters or LoRA Experts based on mode
-        if use_lora_experts:
-            # LoRA Experts mode: create dummy LoRA params (not trained) for KT wrapper compatibility
-            # We use lora_rank=1 (minimum) with zero-initialized B matrices so output = base + 0
-            dummy_lora_rank = 1
-            lora_params = create_lora_params(
-                expert_num=moe_config.expert_num,
-                hidden_size=hidden_size,
-                intermediate_size=moe_config.intermediate_size,
-                lora_rank=dummy_lora_rank,
-                lora_alpha=1.0,
-            )
-            # Freeze the dummy LoRA params (they won't be trained)
-            for param in lora_params.values():
-                param.requires_grad = False
+        # Determine if using SkipLoRA backend (skip per-expert LoRA gradient computation)
+        use_skip_lora = "SkipLoRA" in kt_method
 
-            # Create LoRA Experts module (this is what we actually train)
+        if use_lora_experts:
+            # LoRA Experts mode: create LoRA Experts module
             lora_experts = LoRAExperts(
                 num_experts=model_args.kt_lora_expert_num,
                 hidden_size=hidden_size,
@@ -1062,20 +967,66 @@ def wrap_moe_layers_with_kt_wrapper(
                 device="cuda",
                 dtype=torch.bfloat16,
             )
-            wrapper_lora_rank = dummy_lora_rank
-            wrapper_lora_alpha = 1.0
+
+            if use_skip_lora:
+                # Mode 4: LoRA Experts + SkipLoRA
+                # Create dummy LoRA params (not trained) for KT wrapper compatibility
+                dummy_lora_rank = 1
+                lora_params = create_lora_params(
+                    expert_num=moe_config.expert_num,
+                    hidden_size=hidden_size,
+                    intermediate_size=moe_config.intermediate_size,
+                    lora_rank=dummy_lora_rank,
+                    lora_alpha=1.0,
+                )
+                # Freeze the dummy LoRA params
+                for param in lora_params.values():
+                    param.requires_grad = False
+                wrapper_lora_rank = dummy_lora_rank
+                wrapper_lora_alpha = 1.0
+                logger.info(f"  Layer {layer_idx}: LoRA Experts + SkipLoRA mode (per-expert LoRA frozen)")
+            else:
+                # Mode 3: LoRA Experts + LoRA (both trained)
+                lora_params = create_lora_params(
+                    expert_num=moe_config.expert_num,
+                    hidden_size=hidden_size,
+                    intermediate_size=moe_config.intermediate_size,
+                    lora_rank=lora_rank,
+                    lora_alpha=lora_alpha,
+                )
+                wrapper_lora_rank = lora_rank
+                wrapper_lora_alpha = lora_alpha
+                logger.info(f"  Layer {layer_idx}: LoRA Experts + LoRA mode (both trained)")
         else:
-            # Per-expert LoRA mode
-            lora_params = create_lora_params(
-                expert_num=moe_config.expert_num,
-                hidden_size=hidden_size,
-                intermediate_size=moe_config.intermediate_size,
-                lora_rank=lora_rank,
-                lora_alpha=lora_alpha,
-            )
+            # No LoRA Experts
             lora_experts = None
-            wrapper_lora_rank = lora_rank
-            wrapper_lora_alpha = lora_alpha
+
+            if use_skip_lora:
+                # Mode 2: SkipLoRA only (MoE frozen, only Attention LoRA trained)
+                dummy_lora_rank = 1
+                lora_params = create_lora_params(
+                    expert_num=moe_config.expert_num,
+                    hidden_size=hidden_size,
+                    intermediate_size=moe_config.intermediate_size,
+                    lora_rank=dummy_lora_rank,
+                    lora_alpha=1.0,
+                )
+                for param in lora_params.values():
+                    param.requires_grad = False
+                wrapper_lora_rank = dummy_lora_rank
+                wrapper_lora_alpha = 1.0
+                logger.info(f"  Layer {layer_idx}: SkipLoRA mode (MoE frozen)")
+            else:
+                # Mode 1: Normal per-expert LoRA
+                lora_params = create_lora_params(
+                    expert_num=moe_config.expert_num,
+                    hidden_size=hidden_size,
+                    intermediate_size=moe_config.intermediate_size,
+                    lora_rank=lora_rank,
+                    lora_alpha=lora_alpha,
+                )
+                wrapper_lora_rank = lora_rank
+                wrapper_lora_alpha = lora_alpha
 
         # 3. Create KTMoEWrapper instance (always SFT mode for training)
         wrapper = KTMoEWrapper(

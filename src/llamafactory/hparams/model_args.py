@@ -479,7 +479,8 @@ class KTransformersArguments:
     kt_backend: str = field(
         default="AMXBF16",
         metadata={
-            "help": "KT backend type: 'AMXBF16' for BF16 mode, 'AMXInt8' for INT8 quantization."
+            "help": "KT backend type: 'AMXBF16', 'AMXINT8', 'AMXINT4' for regular LoRA training. "
+            "Add '_SkipLoRA' suffix (e.g., 'AMXINT8_SkipLoRA') to skip per-expert LoRA gradient computation."
         },
     )
     kt_num_threads: int = field(
@@ -543,10 +544,14 @@ class KTransformersArguments:
     )
 
     def __post_init__(self):
-        if self.use_kt and self.kt_backend not in ("AMXBF16", "AMXINT8"):
+        valid_backends = (
+            "AMXBF16", "AMXINT8", "AMXINT4",
+            "AMXBF16_SkipLoRA", "AMXINT8_SkipLoRA", "AMXINT4_SkipLoRA",
+        )
+        if self.use_kt and self.kt_backend not in valid_backends:
             raise ValueError(
                 f"Invalid kt_backend: {self.kt_backend}. "
-                "Must be 'AMXBF16' or 'AMXInt8'."
+                f"Must be one of: {', '.join(valid_backends)}"
             )
         if self.kt_num_gpu_experts < 0:
             raise ValueError(
