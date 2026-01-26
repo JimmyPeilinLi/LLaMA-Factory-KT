@@ -380,3 +380,82 @@ class ReporterCallback(TrainerCallback):
                     "generating_args": self.generating_args.to_dict(),
                 }
             )
+
+
+class LayerDebugCallback(TrainerCallback):
+    r"""A callback for debugging layer outputs during training.
+
+    This callback uses LayerDebugger to capture forward and backward outputs
+    at specified training steps for debugging and comparison purposes.
+    """
+
+    def __init__(self, finetuning_args: "FinetuningArguments") -> None:
+        self.finetuning_args = finetuning_args
+        self.debugger = None
+        self._registered = False
+
+    def _get_output_dir(self, args: "TrainingArguments") -> str:
+        """Get the output directory for layer debug files."""
+        if self.finetuning_args.layer_debug_output_dir:
+            return self.finetuning_args.layer_debug_output_dir
+        return os.path.join(args.output_dir, "layer_outputs")
+
+    @override
+    def on_train_begin(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        if not self.finetuning_args.layer_debug:
+            return
+
+        model = kwargs.get("model")
+        if model is None:
+            logger.warning_rank0("LayerDebugCallback: model not found in kwargs")
+            return
+
+        from ..extras.layer_debug import LayerDebugger
+
+        output_dir = self._get_output_dir(args)
+
+        self.debugger = LayerDebugger(
+            output_dir=output_dir,
+            save_forward=self.finetuning_args.layer_debug_save_forward,
+            save_backward=self.finetuning_args.layer_debug_save_backward,
+            save_input=self.finetuning_args.layer_debug_save_input,
+            include_patterns=self.finetuning_args.layer_debug_include_patterns,
+            exclude_patterns=self.finetuning_args.layer_debug_exclude_patterns,
+            verbose=self.finetuning_args.layer_debug_verbose,
+        )
+
+        self.debugger.register_hooks(model)
+        self._registered = True
+        logger.info_rank0(f"LayerDebugCallback: registered hooks, output_dir={output_dir}")
+
+    @override
+    def on_step_begin(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        if not self._registered or self.debugger is None:
+            return
+
+        # Check if we should save at this step
+        save_steps = self.finetuning_args.layer_debug_save_steps
+        if save_steps is not None and state.global_step not in save_steps:
+            self.debugger.disable()
+        else:
+            self.debugger.enable()
+            self.debugger.clear()
+
+    @override
+    def on_step_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        if not self._registered or self.debugger is None:
+            return
+
+        # Check if we should save at this step
+        save_steps = self.finetuning_args.layer_debug_save_steps
+        if save_steps is None or state.global_step in save_steps:
+            prefix = self.finetuning_args.layer_debug_prefix
+            self.debugger.save(prefix=f"{prefix}_step{state.global_step}")
+            logger.info_rank0(f"LayerDebugCallback: saved layer outputs at step {state.global_step}")
+
+    @override
+    def on_train_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        if self._registered and self.debugger is not None:
+            self.debugger.remove_hooks()
+            self._registered = False
+            logger.info_rank0("LayerDebugCallback: removed hooks")

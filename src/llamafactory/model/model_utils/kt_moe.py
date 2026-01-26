@@ -541,29 +541,16 @@ class KTMoEFunction(torch.autograd.Function):
 
         grad_output_flat = grad_output.view(qlen, hidden_size)
 
-        # Call wrapper's backward
-        grad_input, grad_loras, grad_weights = ctx.wrapper.backward(
+        # Call wrapper's backward with lora_params for direct accumulation
+        # This avoids clone() by accumulating directly to param.grad inside backward()
+        lora_params_for_backward = ctx.lora_params if ctx.train_lora else None
+        grad_input, grad_weights = ctx.wrapper.backward(
             grad_output_flat,
+            lora_params=lora_params_for_backward,
             output_device=ctx.original_device,
         )
 
-        # Accumulate LoRA gradients only if training per-expert LoRA
-        if ctx.train_lora and ctx.lora_params is not None:
-            def accumulate_grad(param: nn.Parameter, grad: torch.Tensor):
-                grad_on_device = grad.to(param.device, dtype=param.dtype)
-                if param.grad is None:
-                    param.grad = grad_on_device
-                else:
-                    param.grad.add_(grad_on_device)
-
-            accumulate_grad(ctx.lora_params["gate_lora_a"], grad_loras["grad_gate_lora_a"])
-            accumulate_grad(ctx.lora_params["gate_lora_b"], grad_loras["grad_gate_lora_b"])
-            accumulate_grad(ctx.lora_params["up_lora_a"], grad_loras["grad_up_lora_a"])
-            accumulate_grad(ctx.lora_params["up_lora_b"], grad_loras["grad_up_lora_b"])
-            accumulate_grad(ctx.lora_params["down_lora_a"], grad_loras["grad_down_lora_a"])
-            accumulate_grad(ctx.lora_params["down_lora_b"], grad_loras["grad_down_lora_b"])
-
-        # Reshape and convert grad_input
+        # Reshape and convert grad_input (already on correct device from backward)
         grad_input = grad_input.view(ctx.batch_size, ctx.seq_len, hidden_size)
         grad_input = grad_input.to(dtype=ctx.original_dtype)
         grad_weights = grad_weights.to(dtype=ctx.original_dtype)
