@@ -401,6 +401,52 @@ class BAdamArgument:
 
 
 @dataclass
+class LayerDebugArguments:
+    r"""Arguments pertaining to layer debugging."""
+
+    layer_debug: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to enable layer debugging to save forward/backward outputs."},
+    )
+    layer_debug_output_dir: str | None = field(
+        default=None,
+        metadata={"help": "Output directory for layer debug files. Defaults to output_dir/layer_outputs."},
+    )
+    layer_debug_save_forward: bool = field(
+        default=True,
+        metadata={"help": "Whether to save forward outputs."},
+    )
+    layer_debug_save_backward: bool = field(
+        default=True,
+        metadata={"help": "Whether to save backward gradients."},
+    )
+    layer_debug_save_input: bool = field(
+        default=False,
+        metadata={"help": "Whether to save layer inputs."},
+    )
+    layer_debug_save_steps: str | None = field(
+        default=None,
+        metadata={"help": "Comma-separated list of steps to save debug outputs. E.g., '0,1,2,3'."},
+    )
+    layer_debug_prefix: str = field(
+        default="debug",
+        metadata={"help": "Prefix for saved debug files."},
+    )
+    layer_debug_verbose: bool = field(
+        default=False,
+        metadata={"help": "Whether to print verbose debug info including call chains."},
+    )
+    layer_debug_include_patterns: str | None = field(
+        default=None,
+        metadata={"help": "Comma-separated regex patterns for layer names to include."},
+    )
+    layer_debug_exclude_patterns: str | None = field(
+        default=None,
+        metadata={"help": "Comma-separated regex patterns for layer names to exclude."},
+    )
+
+
+@dataclass
 class SwanLabArguments:
     use_swanlab: bool = field(
         default=False,
@@ -442,6 +488,7 @@ class SwanLabArguments:
 
 @dataclass
 class FinetuningArguments(
+    LayerDebugArguments,
     SwanLabArguments,
     BAdamArgument,
     ApolloArguments,
@@ -538,6 +585,14 @@ class FinetuningArguments(
         self.galore_target: list[str] = split_arg(self.galore_target)
         self.apollo_target: list[str] = split_arg(self.apollo_target)
         self.use_ref_model = self.stage == "dpo" and self.pref_loss not in ["orpo", "simpo"]
+
+        # Layer debug arguments
+        self.layer_debug_include_patterns: list[str] | None = split_arg(self.layer_debug_include_patterns)
+        self.layer_debug_exclude_patterns: list[str] | None = split_arg(self.layer_debug_exclude_patterns)
+        if self.layer_debug_save_steps is not None:
+            self.layer_debug_save_steps: set[int] = set(int(s.strip()) for s in self.layer_debug_save_steps.split(","))
+        else:
+            self.layer_debug_save_steps: set[int] | None = None
 
         assert self.finetuning_type in ["lora", "oft", "freeze", "full"], "Invalid fine-tuning method."
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."

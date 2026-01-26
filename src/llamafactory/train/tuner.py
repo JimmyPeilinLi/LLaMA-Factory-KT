@@ -27,7 +27,7 @@ from ..extras.misc import infer_optim_dtype
 from ..extras.packages import is_mcore_adapter_available, is_ray_available
 from ..hparams import get_infer_args, get_ray_args, get_train_args, read_args
 from ..model import load_model, load_tokenizer
-from .callbacks import LogCallback, PissaConvertCallback, ReporterCallback
+from .callbacks import LayerDebugCallback, LogCallback, PissaConvertCallback, ReporterCallback
 from .dpo import run_dpo
 from .kto import run_kto
 from .ppo import run_ppo
@@ -64,8 +64,13 @@ def _training_function(config: dict[str, Any]) -> None:
     if finetuning_args.early_stopping_steps is not None:
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=finetuning_args.early_stopping_steps))
 
+    if finetuning_args.layer_debug:
+        callbacks.append(LayerDebugCallback(finetuning_args))
+
     callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
     from pyinstrument import Profiler
+
+    print(os.getpid())
 
     profiler = Profiler()
     profiler.start()
@@ -100,8 +105,8 @@ def _training_function(config: dict[str, Any]) -> None:
         run_kto(model_args, data_args, training_args, finetuning_args, callbacks)
     else:
         raise ValueError(f"Unknown task: {finetuning_args.stage}.")
-    
-    
+
+
     profiler.stop()
     profiler.print()
     profiler.write_html("profiler_output.html")
