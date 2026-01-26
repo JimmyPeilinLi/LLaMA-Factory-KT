@@ -506,17 +506,18 @@ class KTMoEFunction(torch.autograd.Function):
             output = precomputed_output
         else:
             # Sync mode: compute forward
-            input_flat = hidden_states.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
-            expert_ids = topk_ids.view(qlen, num_experts_per_tok).to(torch.int64).cpu().contiguous()
-            weights = topk_weights.view(qlen, num_experts_per_tok).to(torch.float32).cpu().contiguous()
+            input_flat = hidden_states.view(qlen, hidden_size)
+            expert_ids = topk_ids.view(qlen, num_experts_per_tok)
+            weights = topk_weights.view(qlen, num_experts_per_tok)
 
-            cpu_output = wrapper.forward_sft(
+            output = wrapper.forward_sft(
                 hidden_states=input_flat,
                 expert_ids=expert_ids,
                 weights=weights,
                 save_for_backward=training,
+                output_device=original_device,
             )
-            output = cpu_output.view(batch_size, seq_len, hidden_size).to(device=original_device, dtype=original_dtype)
+            output = output.view(batch_size, seq_len, hidden_size).to(dtype=original_dtype)
 
         # Save context for backward
         ctx.wrapper = wrapper
@@ -538,10 +539,13 @@ class KTMoEFunction(torch.autograd.Function):
         qlen = ctx.qlen
         hidden_size = ctx.hidden_size
 
-        grad_output_flat = grad_output.view(qlen, hidden_size).to(torch.bfloat16).cpu().contiguous()
+        grad_output_flat = grad_output.view(qlen, hidden_size)
 
         # Call wrapper's backward
-        grad_input, grad_loras, grad_weights = ctx.wrapper.backward(grad_output_flat)
+        grad_input, grad_loras, grad_weights = ctx.wrapper.backward(
+            grad_output_flat,
+            output_device=ctx.original_device,
+        )
 
         # Accumulate LoRA gradients only if training per-expert LoRA
         if ctx.train_lora and ctx.lora_params is not None:
@@ -561,8 +565,8 @@ class KTMoEFunction(torch.autograd.Function):
 
         # Reshape and convert grad_input
         grad_input = grad_input.view(ctx.batch_size, ctx.seq_len, hidden_size)
-        grad_input = grad_input.to(device=ctx.original_device, dtype=ctx.original_dtype)
-        grad_weights = grad_weights.to(device=ctx.original_device, dtype=ctx.original_dtype)
+        grad_input = grad_input.to(dtype=ctx.original_dtype)
+        grad_weights = grad_weights.to(dtype=ctx.original_dtype)
 
         # Return None for non-Tensor inputs
         # forward args: hidden_states, topk_ids, topk_weights, wrapper, lora_params, hidden_size, num_experts_per_tok, layer_idx, training, train_lora, precomputed_output
@@ -790,10 +794,11 @@ class KTMoELayerWrapper(nn.Module):
         original_dtype = hidden_states.dtype
 
         # Step 1: Prepare and submit CPU computation (non-blocking)
+        # Optimized: pass GPU tensors directly, avoid intermediate .cpu() call
         qlen = batch_size * seq_len
-        input_flat = hidden_states.view(qlen, self.hidden_size).to(torch.bfloat16).cpu().contiguous()
-        expert_ids = topk_ids.view(qlen, self.moe_config.num_experts_per_tok).to(torch.int64).cpu().contiguous()
-        weights = topk_weights.view(qlen, self.moe_config.num_experts_per_tok).to(torch.float32).cpu().contiguous()
+        input_flat = hidden_states.view(qlen, self.hidden_size)
+        expert_ids = topk_ids.view(qlen, self.moe_config.num_experts_per_tok)
+        weights = topk_weights.view(qlen, self.moe_config.num_experts_per_tok)
 
         self.wrapper.submit_forward_sft(input_flat, expert_ids, weights, save_for_backward=True)
 
@@ -805,10 +810,9 @@ class KTMoELayerWrapper(nn.Module):
             lora_out = self.lora_experts(hidden_states)
             gpu_output = lora_out if gpu_output is None else gpu_output + lora_out
 
-        # Step 3: Sync CPU result
-        cpu_output = self.wrapper.sync_forward_sft()
-        cpu_output = cpu_output.view(batch_size, seq_len, self.hidden_size)
-        cpu_output_gpu = cpu_output.to(device=original_device, dtype=original_dtype)
+        # Step 3: Sync CPU result (output directly to GPU, avoiding clone)
+        cpu_output_gpu = self.wrapper.sync_forward_sft(output_device=original_device)
+        cpu_output_gpu = cpu_output_gpu.view(batch_size, seq_len, self.hidden_size).to(dtype=original_dtype)
 
         # Step 4: Wrap in autograd for backward, then combine
         moe_output = KTMoEFunction.apply(
