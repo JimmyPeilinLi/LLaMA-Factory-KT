@@ -98,35 +98,17 @@ def run_sft(
     gen_kwargs["pad_token_id"] = tokenizer.pad_token_id
 
     # Initialize our Trainer
-    if model_args.use_kt:
-        # KTransformers MoE backend - handles MoE layers with CPU AMX
-        from .kt_trainer import create_kt_trainer
-
-        trainer = create_kt_trainer(
-            model=model,
-            training_args=training_args,
-            finetuning_args=finetuning_args,
-            model_args=model_args,
-            data_collator=data_collator,
-            tokenizer_module=tokenizer_module,
-            callbacks=callbacks,
-            gen_kwargs=gen_kwargs,
-            **dataset_module,
-            **metric_module,
-        )
-
-    else:
-        trainer = CustomSeq2SeqTrainer(
-            model=model,
-            args=training_args,
-            finetuning_args=finetuning_args,
-            data_collator=data_collator,
-            callbacks=callbacks,
-            gen_kwargs=gen_kwargs,
-            **dataset_module,
-            **tokenizer_module,
-            **metric_module,
-        )
+    trainer = CustomSeq2SeqTrainer(
+        model=model,
+        args=training_args,
+        finetuning_args=finetuning_args,
+        data_collator=data_collator,
+        callbacks=callbacks,
+        gen_kwargs=gen_kwargs,
+        **dataset_module,
+        **tokenizer_module,
+        **metric_module,
+    )
 
     # Training
     if training_args.do_train:
