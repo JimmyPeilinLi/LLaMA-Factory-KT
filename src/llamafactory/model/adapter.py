@@ -233,7 +233,7 @@ def _setup_lora_tuning(
                         shutil.rmtree(temp_dir, ignore_errors=True)
 
                     # Load MoE LoRA into KT wrappers from original adapter
-                    from .model_utils.kt_moe import load_moe_lora_from_adapter
+                    from accelerate.utils import load_moe_lora_from_adapter
                     load_moe_lora_from_adapter(model, adapter)
                 else:
                     # No MoE modules in adapter, load normally
