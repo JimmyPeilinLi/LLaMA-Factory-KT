@@ -47,6 +47,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 
 
@@ -485,6 +486,102 @@ class LayerDebugger:
         self._step_count += 1
         return self
 
+    def _collect_param_grads(self) -> Dict[str, torch.Tensor]:
+        """收集模型所有参数的梯度"""
+        param_grads = OrderedDict()
+        if self._model is None:
+            return param_grads
+
+        for name, param in self._model.named_parameters():
+            if param.grad is not None:
+                try:
+                    with torch.no_grad():
+                        grad = param.grad.data
+                        # Convert DTensor (from FSDP2) to regular Tensor
+                        try:
+                            from torch.distributed.tensor import DTensor
+                            if isinstance(grad, DTensor):
+                                grad = grad.full_tensor()
+                        except ImportError:
+                            pass
+                        param_grads[name] = grad.clone().cpu()
+                except Exception as e:
+                    print(f"Warning: Failed to collect grad for {name}: {e}")
+
+        return param_grads
+
+    def _gather_tensor(self, tensor: torch.Tensor) -> tuple:
+        """在分布式环境下 all_gather tensor 并沿 batch 维度拼接（支持不同 shape）
+
+        Returns:
+            (gathered_tensor, per_rank_shapes) — per_rank_shapes: list of list[int]
+        """
+        if not dist.is_initialized() or dist.get_world_size() <= 1:
+            return tensor, [list(tensor.shape)]
+
+        world_size = dist.get_world_size()
+        device = torch.device(f"cuda:{dist.get_rank()}" if torch.cuda.is_available() else "cpu")
+        t = tensor.to(device)
+
+        # 交换各 rank 的 shape，以便 pad 到统一大小
+        local_shape = torch.tensor(t.shape, device=device, dtype=torch.int64)
+        all_shapes = [torch.empty_like(local_shape) for _ in range(world_size)]
+        dist.all_gather(all_shapes, local_shape)
+
+        max_shape = torch.stack(all_shapes).max(dim=0).values.tolist()
+        per_rank_shapes = [s.tolist() for s in all_shapes]
+
+        # Pad to max_shape if needed
+        if list(t.shape) != max_shape:
+            pad_widths = []  # torch.nn.functional.pad uses reverse dim order
+            for i in reversed(range(t.dim())):
+                pad_widths.extend([0, max_shape[i] - t.shape[i]])
+            t = torch.nn.functional.pad(t, pad_widths)
+
+        gathered = [torch.empty_like(t) for _ in range(world_size)]
+        dist.all_gather(gathered, t)
+
+        # Trim each rank's padding, then pad non-batch dims to max for cat
+        trimmed = []
+        for i, g in enumerate(gathered):
+            slices = tuple(slice(0, all_shapes[i][d].item()) for d in range(g.dim()))
+            trimmed.append(g[slices])
+
+        # For cat along dim 0, all other dims must match → pad to max
+        if t.dim() > 1:
+            max_other = [max(tr.shape[d] for tr in trimmed) for d in range(t.dim())]
+            padded = []
+            for tr in trimmed:
+                if list(tr.shape) != [tr.shape[0]] + max_other[1:]:
+                    pw = []
+                    for d in reversed(range(tr.dim())):
+                        if d == 0:
+                            pw.extend([0, 0])  # don't pad batch dim
+                        else:
+                            pw.extend([0, max_other[d] - tr.shape[d]])
+                    tr = torch.nn.functional.pad(tr, pw)
+                padded.append(tr)
+            trimmed = padded
+
+        return torch.cat(trimmed, dim=0).cpu(), per_rank_shapes
+
+    def _gather_data(self, data: Any, key_prefix: str = "") -> Any:
+        """递归地对所有 tensor 做 all_gather, 同时将 per-rank shapes 记录到 self._rank_shapes"""
+        if isinstance(data, torch.Tensor):
+            if data.dim() >= 1:
+                gathered, shapes = self._gather_tensor(data)
+                if key_prefix:
+                    self._rank_shapes[key_prefix] = shapes
+                return gathered
+            return data
+        elif isinstance(data, tuple):
+            return tuple(self._gather_data(x, f"{key_prefix}[{i}]") for i, x in enumerate(data))
+        elif isinstance(data, list):
+            return [self._gather_data(x, f"{key_prefix}[{i}]") for i, x in enumerate(data)]
+        elif isinstance(data, dict):
+            return {k: self._gather_data(v, f"{key_prefix}.{k}" if key_prefix else k) for k, v in data.items()}
+        return data
+
     def save(
         self,
         prefix: str = "debug",
@@ -513,6 +610,15 @@ class LayerDebugger:
         filename = "_".join(filename_parts)
         save_path = os.path.join(self.output_dir, filename)
 
+        # 在分布式环境下 all_gather 所有 tensor，使每个 rank 保存完整数据
+        self._rank_shapes = {}  # 收集每个 tensor 的 per-rank 原始 shape
+        fwd_out = {k: self._gather_data(v, k) for k, v in self.forward_outputs.items()}
+        bwd_gin = {k: self._gather_data(v, k) for k, v in self.backward_grad_inputs.items()}
+        bwd_gout = {k: self._gather_data(v, k) for k, v in self.backward_grad_outputs.items()}
+
+        # 收集参数梯度
+        param_grads = self._collect_param_grads()
+
         # 准备保存的数据
         data = {
             "metadata": {
@@ -521,33 +627,45 @@ class LayerDebugger:
                 "save_forward": self.save_forward,
                 "save_backward": self.save_backward,
                 "save_input": self.save_input,
-                "num_forward_outputs": len(self.forward_outputs),
-                "num_backward_grad_inputs": len(self.backward_grad_inputs),
-                "num_backward_grad_outputs": len(self.backward_grad_outputs),
+                "num_forward_outputs": len(fwd_out),
+                "num_backward_grad_inputs": len(bwd_gin),
+                "num_backward_grad_outputs": len(bwd_gout),
+                "num_param_grads": len(param_grads),
             },
-            "forward_outputs": dict(self.forward_outputs),
-            "backward_grad_inputs": dict(self.backward_grad_inputs),
-            "backward_grad_outputs": dict(self.backward_grad_outputs),
+            "forward_outputs": fwd_out,
+            "backward_grad_inputs": bwd_gin,
+            "backward_grad_outputs": bwd_gout,
+            "param_grads": param_grads,
         }
 
         if self.save_input:
-            data["forward_inputs"] = dict(self.forward_inputs)
-            data["metadata"]["num_forward_inputs"] = len(self.forward_inputs)
+            fwd_in = {k: self._gather_data(v, k) for k, v in self.forward_inputs.items()}
+            data["forward_inputs"] = fwd_in
+            data["metadata"]["num_forward_inputs"] = len(fwd_in)
+
+        # 保存 per-rank shapes 用于 compare 时忽略 padding
+        if self._rank_shapes:
+            data["rank_shapes"] = self._rank_shapes
 
         # 保存模型结构
         model_structure = self._get_model_structure()
         if model_structure is not None:
             data["model_structure"] = model_structure
 
-        torch.save(data, save_path)
-        print(f"LayerDebugger: Saved to {save_path}")
-        print(f"  - Forward outputs: {len(self.forward_outputs)} layers")
-        if self.save_input:
+        # 只在 rank 0 保存文件，避免多 rank 写同一文件冲突
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        if rank == 0:
+            torch.save(data, save_path)
+            print(f"LayerDebugger: Saved to {save_path}")
+            print(f"  - Forward outputs: {len(self.forward_outputs)} layers")
+        if self.save_input and rank == 0:
             print(f"  - Forward inputs: {len(self.forward_inputs)} layers")
-        print(f"  - Backward grad_inputs: {len(self.backward_grad_inputs)} layers")
-        print(f"  - Backward grad_outputs: {len(self.backward_grad_outputs)} layers")
-        if model_structure is not None:
-            print(f"  - Model structure: {len(model_structure['modules'])} modules")
+        if rank == 0:
+            print(f"  - Backward grad_inputs: {len(self.backward_grad_inputs)} layers")
+            print(f"  - Backward grad_outputs: {len(self.backward_grad_outputs)} layers")
+            print(f"  - Param grads: {len(param_grads)} params")
+            if model_structure is not None:
+                print(f"  - Model structure: {len(model_structure['modules'])} modules")
 
         return save_path
 
