@@ -510,6 +510,30 @@ class LayerDebugger:
 
         return param_grads
 
+    def _collect_lora_params(self) -> Dict[str, torch.Tensor]:
+        """收集模型所有 LoRA 参数的值（包括 PEFT LoRA 和 KT LoRA）"""
+        lora_params = OrderedDict()
+        if self._model is None:
+            return lora_params
+
+        for name, param in self._model.named_parameters():
+            # Match PEFT LoRA params (lora_A, lora_B) and KT LoRA params (lora_params.*)
+            if "lora" in name.lower():
+                try:
+                    with torch.no_grad():
+                        data = param.data
+                        try:
+                            from torch.distributed.tensor import DTensor
+                            if isinstance(data, DTensor):
+                                data = data.full_tensor()
+                        except ImportError:
+                            pass
+                        lora_params[name] = data.clone().cpu()
+                except Exception as e:
+                    print(f"Warning: Failed to collect lora param {name}: {e}")
+
+        return lora_params
+
     def _gather_tensor(self, tensor: torch.Tensor) -> tuple:
         """在分布式环境下 all_gather tensor 并沿 batch 维度拼接（支持不同 shape）
 
@@ -521,10 +545,10 @@ class LayerDebugger:
 
         world_size = dist.get_world_size()
         device = torch.device(f"cuda:{dist.get_rank()}" if torch.cuda.is_available() else "cpu")
-        t = tensor.to(device)
+        t = tensor.to(device).contiguous()
 
         # 交换各 rank 的 shape，以便 pad 到统一大小
-        local_shape = torch.tensor(t.shape, device=device, dtype=torch.int64)
+        local_shape = torch.tensor(t.shape, device=device, dtype=torch.int64).contiguous()
         all_shapes = [torch.empty_like(local_shape) for _ in range(world_size)]
         dist.all_gather(all_shapes, local_shape)
 
@@ -536,10 +560,10 @@ class LayerDebugger:
             pad_widths = []  # torch.nn.functional.pad uses reverse dim order
             for i in reversed(range(t.dim())):
                 pad_widths.extend([0, max_shape[i] - t.shape[i]])
-            t = torch.nn.functional.pad(t, pad_widths)
+            t = torch.nn.functional.pad(t, pad_widths).contiguous()
 
         gathered = [torch.empty_like(t) for _ in range(world_size)]
-        dist.all_gather(gathered, t)
+        dist.all_gather(gathered, t.contiguous())
 
         # Trim each rank's padding, then pad non-batch dims to max for cat
         trimmed = []
@@ -619,6 +643,9 @@ class LayerDebugger:
         # 收集参数梯度
         param_grads = self._collect_param_grads()
 
+        # 收集 LoRA 参数值
+        lora_params = self._collect_lora_params()
+
         # 准备保存的数据
         data = {
             "metadata": {
@@ -631,11 +658,13 @@ class LayerDebugger:
                 "num_backward_grad_inputs": len(bwd_gin),
                 "num_backward_grad_outputs": len(bwd_gout),
                 "num_param_grads": len(param_grads),
+                "num_lora_params": len(lora_params),
             },
             "forward_outputs": fwd_out,
             "backward_grad_inputs": bwd_gin,
             "backward_grad_outputs": bwd_gout,
             "param_grads": param_grads,
+            "lora_params": lora_params,
         }
 
         if self.save_input:
@@ -664,6 +693,7 @@ class LayerDebugger:
             print(f"  - Backward grad_inputs: {len(self.backward_grad_inputs)} layers")
             print(f"  - Backward grad_outputs: {len(self.backward_grad_outputs)} layers")
             print(f"  - Param grads: {len(param_grads)} params")
+            print(f"  - LoRA params: {len(lora_params)} params")
             if model_structure is not None:
                 print(f"  - Model structure: {len(model_structure['modules'])} modules")
 

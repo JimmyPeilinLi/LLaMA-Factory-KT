@@ -499,7 +499,7 @@ class KTransformersArguments:
         },
     )
     kt_max_cache_depth: int = field(
-        default=1,
+        default=2,
         metadata={
             "help": "Maximum cache depth for gradient checkpointing. "
             "Set to gradient_accumulation_steps for best memory efficiency."

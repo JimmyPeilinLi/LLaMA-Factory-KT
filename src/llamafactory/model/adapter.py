@@ -265,8 +265,6 @@ def _setup_lora_tuning(
         else:
             target_modules = finetuning_args.lora_target
 
-        # KTransformers mode: Log info about LoRA target modules
-        # Note: lora_target: all now includes MoE modules; use all_attention to exclude them
         if model_args.use_kt:
             logger.info_rank0(f"KTransformers mode: Applying peft LoRA to modules: {target_modules}")
 

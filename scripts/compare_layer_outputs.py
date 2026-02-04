@@ -37,6 +37,12 @@
                       顺序: lm_head -> norm -> layers.X.mlp -> layers.X.post_attention_layernorm ->
                             layers.X.self_attn -> layers.X.self_attn.o_proj ->
                             layers.X.self_attn.kv_b_proj -> ... -> embed_tokens
+    --mlp-mismatch: 比较 MLP 输出，专门处理 token 数量不匹配的情况
+                    适用于 CPU 单进程 vs KT 分布式运行的对比，会:
+                    1. 检测两个文件的配置差异（rank 数、token 数等）
+                    2. 使用 rank_shapes 识别有效 token 区域
+                    3. 只比较有效数据，忽略 padding
+                    4. 诊断可能的问题（如 token 截断）
 """
 
 import argparse
@@ -92,6 +98,7 @@ def load_layer_outputs(file_path: str) -> Dict[str, Any]:
     print(f"  - Backward grad_inputs: {metadata.get('num_backward_grad_inputs', 0)} 层")
     print(f"  - Backward grad_outputs: {metadata.get('num_backward_grad_outputs', 0)} 层")
     print(f"  - Param grads: {metadata.get('num_param_grads', len(data.get('param_grads', {})))} params")
+    print(f"  - LoRA params: {metadata.get('num_lora_params', len(data.get('lora_params', {})))} params")
     if "model_structure" in data:
         num_modules = len(data["model_structure"].get("modules", {}))
         print(f"  - Model structure: {num_modules} modules")
@@ -980,14 +987,19 @@ def compute_tensor_metrics(tensor1: torch.Tensor, tensor2: torch.Tensor,
     # 处理形状不匹配：截取到各维度的最小值再比较
     if t1.shape != t2.shape:
         if t1.dim() != t2.dim():
-            return {
-                "shape_mismatch": True,
-                "shape1": str(list(t1.shape)),
-                "shape2": str(list(t2.shape)),
-            }
-        slices = tuple(slice(0, min(t1.shape[d], t2.shape[d])) for d in range(t1.dim()))
-        t1 = t1[slices]
-        t2 = t2[slices]
+            # 尝试展平后比较（如果元素数量相同或接近）
+            if t1.numel() == t2.numel():
+                t1 = t1.reshape(-1)
+                t2 = t2.reshape(-1)
+            else:
+                # 元素数量不同，尝试截取到最小元素数量
+                min_numel = min(t1.numel(), t2.numel())
+                t1 = t1.reshape(-1)[:min_numel]
+                t2 = t2.reshape(-1)[:min_numel]
+        else:
+            slices = tuple(slice(0, min(t1.shape[d], t2.shape[d])) for d in range(t1.dim()))
+            t1 = t1[slices]
+            t2 = t2[slices]
 
     orig_shape = list(t1.shape)
 
@@ -1457,6 +1469,167 @@ def compare_kt_lora_grads(data1: Dict, data2: Dict, layer_filter: Optional[str] 
     print("=" * 90)
 
 
+def compare_attn_lora_grads(data1: Dict, data2: Dict, layer_filter: Optional[str] = None):
+    """比较 Attention LoRA 梯度 (非 MoE 的 LoRA 参数)
+
+    比较 self_attn 模块中的 LoRA 梯度:
+    - q_proj.lora_A/B
+    - kv_a_proj_with_mqa.lora_A/B
+    - kv_b_proj.lora_A/B
+    - o_proj.lora_A/B
+    """
+    import re
+    import torch.nn.functional as F
+
+    grads1 = data1.get("param_grads", {})
+    grads2 = data2.get("param_grads", {})
+
+    def _to_tensor(v):
+        """Convert DTensor to plain Tensor if needed."""
+        try:
+            from torch.distributed.tensor import DTensor
+            if isinstance(v, DTensor):
+                return v.full_tensor()
+        except ImportError:
+            pass
+        return v
+
+    # Find attention LoRA keys (exclude mlp/experts)
+    attn_pattern = re.compile(r"layers\.(\d+)\.self_attn\.([\w_]+)\.lora_([AB])\.default\.weight")
+
+    def get_attn_lora_keys(grads):
+        keys = {}
+        for k in grads.keys():
+            m = attn_pattern.search(k)
+            if m:
+                layer_idx, proj, lora_type = m.groups()
+                key_tuple = (int(layer_idx), proj, lora_type)
+                keys[key_tuple] = k
+        return keys
+
+    keys1 = get_attn_lora_keys(grads1)
+    keys2 = get_attn_lora_keys(grads2)
+
+    common_keys = set(keys1.keys()) & set(keys2.keys())
+
+    if layer_filter:
+        filt = re.compile(layer_filter)
+        common_keys = {k for k in common_keys if filt.search(f"layers.{k[0]}")}
+
+    print("\n" + "=" * 90)
+    print("Attention LoRA 梯度比较 (self_attn 模块)")
+    print("=" * 90)
+    print(f"文件1 attention LoRA params: {len(keys1)}")
+    print(f"文件2 attention LoRA params: {len(keys2)}")
+    print(f"共同 params: {len(common_keys)}")
+    print("-" * 90)
+
+    if not common_keys:
+        print("没有找到共同的 attention LoRA 参数")
+        return
+
+    # Group by layer
+    layer_indices = sorted(set(k[0] for k in common_keys))
+
+    all_results = []  # (layer, proj, lora_type, norm1, norm2, ratio, cos)
+
+    for layer_idx in layer_indices:
+        layer_results = []
+        layer_keys = sorted([k for k in common_keys if k[0] == layer_idx], key=lambda x: (x[1], x[2]))
+
+        for key_tuple in layer_keys:
+            k1 = keys1[key_tuple]
+            k2 = keys2[key_tuple]
+
+            g1 = _to_tensor(grads1[k1]).float()
+            g2 = _to_tensor(grads2[k2]).float()
+
+            # Handle shape mismatch
+            if g1.shape != g2.shape:
+                print(f"  Shape mismatch: layer={layer_idx}, {key_tuple[1]}.lora_{key_tuple[2]}: "
+                      f"{list(g1.shape)} vs {list(g2.shape)}")
+                continue
+
+            n1 = g1.norm().item()
+            n2 = g2.norm().item()
+
+            # Skip all-zero pairs
+            if n1 < 1e-12 and n2 < 1e-12:
+                continue
+
+            ratio = n2 / n1 if n1 > 1e-12 else float("inf")
+            cos = F.cosine_similarity(g1.flatten().unsqueeze(0), g2.flatten().unsqueeze(0)).item()
+
+            # Also compute mean/sum ratios
+            mean1 = g1.abs().mean().item()
+            mean2 = g2.abs().mean().item()
+            mean_ratio = mean2 / mean1 if mean1 > 1e-12 else float("inf")
+
+            layer_results.append((key_tuple[1], key_tuple[2], n1, n2, ratio, cos, mean_ratio))
+
+        if not layer_results:
+            continue
+
+        # Print per-layer summary
+        cos_vals = [r[5] for r in layer_results if r[4] != float("inf")]
+        ratio_vals = [r[4] for r in layer_results if r[4] != float("inf")]
+        mean_ratio_vals = [r[6] for r in layer_results if r[6] != float("inf")]
+        n_anomaly = sum(1 for r in layer_results if r[5] < 0.95 or r[4] < 0.8 or r[4] > 1.6)
+
+        print(f"\nLayer {layer_idx:>2}: "
+              f"compared={len(layer_results)}, anomalies={n_anomaly}, "
+              f"cos=[{min(cos_vals):.4f}, {max(cos_vals):.4f}] mean={sum(cos_vals)/len(cos_vals):.4f}, "
+              f"norm_ratio=[{min(ratio_vals):.4f}, {max(ratio_vals):.4f}] mean={sum(ratio_vals)/len(ratio_vals):.4f}, "
+              f"mean_ratio=[{min(mean_ratio_vals):.4f}, {max(mean_ratio_vals):.4f}]")
+
+        # Show details for each proj
+        for proj, lora_type, n1, n2, ratio, cos, mean_ratio in layer_results:
+            status = "✓" if cos > 0.95 and 0.8 < ratio < 1.6 else "✗"
+            print(f"    [{status}] {proj}.lora_{lora_type}: "
+                  f"norm1={n1:.4e}, norm2={n2:.4e}, ratio={ratio:.4f}, cos={cos:.4f}, mean_ratio={mean_ratio:.4f}")
+
+        all_results.extend(layer_results)
+
+    # Global summary
+    if all_results:
+        cos_all = [r[5] for r in all_results if r[4] != float("inf")]
+        ratio_all = [r[4] for r in all_results if r[4] != float("inf")]
+        mean_ratio_all = [r[6] for r in all_results if r[6] != float("inf")]
+        n_total = len(all_results)
+        n_bad = sum(1 for r in all_results if r[5] < 0.95 or r[4] < 0.8 or r[4] > 1.6)
+
+        print(f"\n{'=' * 90}")
+        print(f"全局汇总: total={n_total}, anomalies={n_bad} ({100*n_bad/n_total:.1f}%)")
+        print(f"  cos_sim:    min={min(cos_all):.6f}, mean={sum(cos_all)/len(cos_all):.6f}, max={max(cos_all):.6f}")
+        print(f"  norm_ratio: min={min(ratio_all):.6f}, mean={sum(ratio_all)/len(ratio_all):.6f}, max={max(ratio_all):.6f}")
+        print(f"  mean_ratio: min={min(mean_ratio_all):.6f}, mean={sum(mean_ratio_all)/len(mean_ratio_all):.6f}, max={max(mean_ratio_all):.6f}")
+
+        # Group by proj type
+        by_proj = {}
+        for proj, lora_type, n1, n2, ratio, cos, mean_ratio in all_results:
+            key = f"{proj}.lora_{lora_type}"
+            by_proj.setdefault(key, []).append((ratio, cos, mean_ratio))
+
+        print(f"\n  按 Proj 类型汇总:")
+        for proj_key in sorted(by_proj.keys()):
+            vals = by_proj[proj_key]
+            ratios = [v[0] for v in vals if v[0] != float("inf")]
+            coss = [v[1] for v in vals]
+            mean_ratios = [v[2] for v in vals if v[2] != float("inf")]
+            if ratios:
+                print(f"    {proj_key:<35}: n={len(vals):>3}, "
+                      f"cos=[{min(coss):.4f},{max(coss):.4f}] mean={sum(coss)/len(coss):.4f}, "
+                      f"ratio=[{min(ratios):.4f},{max(ratios):.4f}] mean={sum(ratios)/len(ratios):.4f}")
+
+        # Print sqrt(2) check
+        import math
+        avg_ratio = sum(ratio_all) / len(ratio_all)
+        print(f"\n  sqrt(2) = {math.sqrt(2):.6f}, 平均 ratio = {avg_ratio:.6f}, "
+              f"差异 = {abs(avg_ratio - math.sqrt(2)):.6f}")
+
+    print("=" * 90)
+
+
 def compare_param_grads(
     data1: Dict[str, Any],
     data2: Dict[str, Any],
@@ -1557,6 +1730,658 @@ def compare_param_grads(
     return {"passed": passed, "failed": failed}
 
 
+def compare_mlp_with_token_mismatch(
+    data1: Dict[str, Any],
+    data2: Dict[str, Any],
+    threshold: float = 1e-5,
+    layer_filter: Optional[str] = None,
+) -> Dict:
+    """
+    比较两个文件的 MLP 输出，处理 token 数量不匹配的情况。
+
+    适用于以下场景:
+    - CPU 单进程运行 vs KT 分布式运行
+    - 两个文件的 batch/seq 配置不同
+    - 分布式训练时各 rank 的数据量不同
+
+    比较策略:
+    1. 使用 rank_shapes 识别每个 rank 的有效 token 数量
+    2. 比较 embedding 以确认输入数据是否匹配
+    3. 对于 gate 输出，按有效 token 对齐比较
+    4. 对于 MLP hidden_states 输出，比较重叠部分
+    """
+    import torch.nn.functional as F
+
+    fwd1 = data1.get("forward_outputs", {})
+    fwd2 = data2.get("forward_outputs", {})
+    rs1 = data1.get("rank_shapes", {})
+    rs2 = data2.get("rank_shapes", {})
+
+    print(f"\n{'=' * 70}")
+    print("MLP 输出比较 (处理 token 数量不匹配)")
+    print("=" * 70)
+
+    # 1. 检测配置差异
+    print("\n1. 配置检测:")
+
+    # 获取 embedding shapes
+    embed_key = None
+    for key in fwd1.keys():
+        if "embed_tokens" in key:
+            embed_key = key
+            break
+
+    if embed_key:
+        embed1 = fwd1.get(embed_key)
+        embed2 = fwd2.get(embed_key)
+        embed_rs1 = rs1.get(embed_key, [])
+        embed_rs2 = rs2.get(embed_key, [])
+
+        print(f"   文件1 embedding shape: {list(embed1.shape) if embed1 is not None else 'N/A'}")
+        print(f"   文件1 rank_shapes: {embed_rs1}")
+        print(f"   文件2 embedding shape: {list(embed2.shape) if embed2 is not None else 'N/A'}")
+        print(f"   文件2 rank_shapes: {embed_rs2}")
+
+        # 计算有效 token 数
+        def count_valid_tokens(rs_list):
+            if not rs_list:
+                return None
+            total = 0
+            for rs in rs_list:
+                if len(rs) >= 2:
+                    total += rs[0] * rs[1]  # batch * seq
+            return total
+
+        valid1 = count_valid_tokens(embed_rs1)
+        valid2 = count_valid_tokens(embed_rs2)
+
+        if valid1 is not None or valid2 is not None:
+            print(f"\n   有效 token 数:")
+            print(f"   文件1: {valid1 if valid1 else 'unknown (single process)'}")
+            print(f"   文件2: {valid2 if valid2 else 'unknown (single process)'}")
+
+    # 2. 比较 embedding 以验证输入数据匹配
+    print("\n2. Embedding 输入验证:")
+    if embed_key and embed1 is not None and embed2 is not None:
+        # 获取两者的有效区域
+        # 使用 build_valid_mask 来获取有效数据
+        mask1 = build_valid_mask(embed1, embed_rs1 if embed_rs1 else None)
+        mask2 = build_valid_mask(embed2, embed_rs2 if embed_rs2 else None)
+
+        # 只比较两者都有效的部分
+        min_batch = min(embed1.shape[0], embed2.shape[0])
+        min_seq = min(embed1.shape[1], embed2.shape[1])
+
+        for b in range(min_batch):
+            # 确定这个 batch 的有效 seq 长度
+            seq1_valid = embed1.shape[1]
+            seq2_valid = embed2.shape[1]
+
+            # 从 rank_shapes 推断有效长度
+            if embed_rs1 and b < len(embed_rs1):
+                seq1_valid = embed_rs1[b][1] if len(embed_rs1[b]) > 1 else embed1.shape[1]
+            if embed_rs2 and b < len(embed_rs2):
+                seq2_valid = embed_rs2[b][1] if len(embed_rs2[b]) > 1 else embed2.shape[1]
+
+            valid_seq = min(seq1_valid, seq2_valid)
+            e1 = embed1[b, :valid_seq, :].flatten().float()
+            e2 = embed2[b, :valid_seq, :].flatten().float()
+
+            if e1.numel() > 0 and e2.numel() > 0:
+                cos = F.cosine_similarity(e1.unsqueeze(0), e2.unsqueeze(0)).item()
+                max_diff = (e1 - e2).abs().max().item()
+                status = "✓" if cos > 0.999 else "✗"
+                print(f"   Batch {b} (first {valid_seq} tokens): cos_sim={cos:.6f}, max_diff={max_diff:.6e} {status}")
+
+    # 3. 比较 Gate 输出
+    print("\n3. Gate (Router) 输出比较:")
+    print("-" * 70)
+
+    # 找到所有 gate keys
+    gate_pattern = re.compile(r"layers\.(\d+)\.mlp\.gate$")
+    gate_keys1 = {int(m.group(1)): k for k in fwd1.keys() for m in [gate_pattern.search(k)] if m}
+    gate_keys2 = {int(m.group(1)): k for k in fwd2.keys() for m in [gate_pattern.search(k)] if m}
+
+    common_layers = sorted(set(gate_keys1.keys()) & set(gate_keys2.keys()))
+
+    if layer_filter:
+        filt = re.compile(layer_filter)
+        common_layers = [i for i in common_layers if filt.search(f"layers.{i}")]
+
+    gate_results = []
+    for layer_idx in common_layers[:10]:  # 只显示前 10 层
+        k1, k2 = gate_keys1[layer_idx], gate_keys2[layer_idx]
+        g1, g2 = fwd1[k1], fwd2[k2]
+
+        # Gate 输出是 [num_tokens, num_experts]
+        # 需要对齐有效 tokens
+
+        # 获取 rank_shapes
+        grs1 = rs1.get(k1, [])
+        grs2 = rs2.get(k2, [])
+
+        # 计算有效 token 数
+        if grs1:
+            # grs1 形如 [[48, 128], [40, 128]] 表示两次调用
+            # 每次调用的第一维是 token 数
+            valid_tokens1 = sum(rs[0] for rs in grs1)
+        else:
+            valid_tokens1 = g1.shape[0]
+
+        if grs2:
+            valid_tokens2 = sum(rs[0] for rs in grs2)
+        else:
+            valid_tokens2 = g2.shape[0]
+
+        # 比较有效区域
+        valid_tokens = min(valid_tokens1, valid_tokens2)
+        g1_valid = g1[:valid_tokens].flatten().float()
+        g2_valid = g2[:valid_tokens].flatten().float()
+
+        if g1_valid.numel() > 0 and g2_valid.numel() > 0:
+            cos = F.cosine_similarity(g1_valid.unsqueeze(0), g2_valid.unsqueeze(0)).item()
+            max_diff = (g1_valid - g2_valid).abs().max().item()
+            status = "✓" if cos > 0.99 else "✗"
+            print(f"   Layer {layer_idx:2d}: shape1={list(g1.shape)}, shape2={list(g2.shape)}, "
+                  f"valid={valid_tokens}, cos={cos:.6f}, max_diff={max_diff:.2e} {status}")
+            gate_results.append((layer_idx, cos, max_diff))
+
+    # 4. 比较 MLP hidden_states 输出
+    print("\n4. MLP Hidden States 输出比较:")
+    print("-" * 70)
+
+    mlp_pattern = re.compile(r"layers\.(\d+)\.mlp$")
+    mlp_keys1 = {int(m.group(1)): k for k in fwd1.keys() for m in [mlp_pattern.search(k)] if m}
+    mlp_keys2 = {int(m.group(1)): k for k in fwd2.keys() for m in [mlp_pattern.search(k)] if m}
+
+    common_mlp_layers = sorted(set(mlp_keys1.keys()) & set(mlp_keys2.keys()))
+
+    if layer_filter:
+        common_mlp_layers = [i for i in common_mlp_layers if filt.search(f"layers.{i}")]
+
+    mlp_results = []
+    for layer_idx in common_mlp_layers[:10]:  # 只显示前 10 层
+        k1, k2 = mlp_keys1[layer_idx], mlp_keys2[layer_idx]
+        m1, m2 = fwd1[k1], fwd2[k2]
+
+        # MLP 输出可能是 tuple (hidden_states, router_logits) 或单个 tensor
+        if isinstance(m1, (tuple, list)):
+            m1 = m1[0]
+        if isinstance(m2, (tuple, list)):
+            m2 = m2[0]
+
+        # 获取 rank_shapes
+        mrs1 = rs1.get(k1, [])
+        mrs2 = rs2.get(k2, [])
+
+        # 使用 mask 来识别有效区域
+        mask1 = build_valid_mask(m1, mrs1 if mrs1 else None)
+        mask2 = build_valid_mask(m2, mrs2 if mrs2 else None)
+
+        # 只比较两者都有效的部分
+        min_shape = [min(m1.shape[d], m2.shape[d]) for d in range(m1.dim())]
+        slices = tuple(slice(0, s) for s in min_shape)
+
+        m1_sub = m1[slices]
+        m2_sub = m2[slices]
+        mask1_sub = mask1[slices]
+        mask2_sub = mask2[slices]
+
+        # 只保留两者都有效的数据
+        combined_mask = mask1_sub & mask2_sub
+        m1_valid = m1_sub[combined_mask].float()
+        m2_valid = m2_sub[combined_mask].float()
+
+        if m1_valid.numel() > 0 and m2_valid.numel() > 0:
+            cos = F.cosine_similarity(m1_valid.unsqueeze(0), m2_valid.unsqueeze(0)).item()
+            max_diff = (m1_valid - m2_valid).abs().max().item()
+            mean_diff = (m1_valid - m2_valid).abs().mean().item()
+            status = "✓" if cos > 0.99 else "✗"
+            print(f"   Layer {layer_idx:2d}: shape1={list(m1.shape)}, shape2={list(m2.shape)}, "
+                  f"valid_numel={m1_valid.numel()}, cos={cos:.6f}, max_diff={max_diff:.2e} {status}")
+            mlp_results.append((layer_idx, cos, max_diff, mean_diff))
+        else:
+            print(f"   Layer {layer_idx:2d}: No valid overlapping data")
+
+    # 5. 总结
+    print("\n" + "=" * 70)
+    print("总结")
+    print("=" * 70)
+
+    if gate_results:
+        gate_cos = [r[1] for r in gate_results]
+        print(f"\nGate 输出:")
+        print(f"   cos_sim: min={min(gate_cos):.6f}, max={max(gate_cos):.6f}, mean={sum(gate_cos)/len(gate_cos):.6f}")
+        bad_gates = [r for r in gate_results if r[1] < 0.99]
+        if bad_gates:
+            print(f"   ⚠ cos_sim < 0.99 的层: {', '.join([f'L{r[0]}({r[1]:.4f})' for r in bad_gates])}")
+
+    if mlp_results:
+        mlp_cos = [r[1] for r in mlp_results]
+        print(f"\nMLP Hidden States:")
+        print(f"   cos_sim: min={min(mlp_cos):.6f}, max={max(mlp_cos):.6f}, mean={sum(mlp_cos)/len(mlp_cos):.6f}")
+        bad_mlps = [r for r in mlp_results if r[1] < 0.99]
+        if bad_mlps:
+            print(f"   ⚠ cos_sim < 0.99 的层: {', '.join([f'L{r[0]}({r[1]:.4f})' for r in bad_mlps])}")
+
+    # 检测可能的问题
+    print("\n诊断信息:")
+    if embed_rs1 and embed_rs2:
+        # 检测分布式配置差异
+        if len(embed_rs1) != len(embed_rs2):
+            print(f"   ⚠ Rank 数量不同: 文件1={len(embed_rs1)} ranks, 文件2={len(embed_rs2)} ranks")
+
+        # 检测 token 数量差异
+        tokens1 = sum(rs[0] * rs[1] if len(rs) >= 2 else rs[0] for rs in embed_rs1)
+        tokens2 = sum(rs[0] * rs[1] if len(rs) >= 2 else rs[0] for rs in embed_rs2)
+        if tokens1 != tokens2:
+            print(f"   ⚠ 有效 token 数不同: 文件1={tokens1}, 文件2={tokens2}, 差异={abs(tokens1-tokens2)}")
+
+        # 检测截断问题
+        for i, (rs_1, rs_2) in enumerate(zip(embed_rs1, embed_rs2)):
+            if len(rs_1) >= 2 and len(rs_2) >= 2:
+                if rs_1[1] != rs_2[1]:
+                    print(f"   ⚠ Rank {i} seq_len 不同: 文件1={rs_1[1]}, 文件2={rs_2[1]}")
+
+    print("=" * 70)
+
+    return {
+        "gate_results": gate_results,
+        "mlp_results": mlp_results,
+    }
+
+
+def compare_lora_params(
+    data1: Dict[str, Any],
+    data2: Dict[str, Any],
+    threshold: float = 1e-5,
+    layer_filter: Optional[str] = None,
+) -> Dict:
+    """
+    比较两个文件中保存的 LoRA 参数值
+
+    支持三种情况:
+    1. 两个文件都是 PEFT LoRA (experts.X.proj.lora_A/B)
+    2. 两个文件都是 KT LoRA (lora_params.xxx_lora_a/b)
+    3. 一个 PEFT + 一个 KT (将 KT 合并张量按 expert 拆开对比)
+    """
+    import torch.nn.functional as F
+
+    lora1 = data1.get("lora_params", {})
+    lora2 = data2.get("lora_params", {})
+
+    if not lora1 and not lora2:
+        print("\n两个文件都没有 lora_params 数据")
+        return {"passed": 0, "failed": 0}
+
+    # Normalize keys
+    lora1 = {get_canonical_name(k): v for k, v in lora1.items()}
+    lora2 = {get_canonical_name(k): v for k, v in lora2.items()}
+
+    keys1 = set(lora1.keys())
+    keys2 = set(lora2.keys())
+
+    if layer_filter:
+        pattern = re.compile(layer_filter)
+        keys1 = {k for k in keys1 if pattern.search(k)}
+        keys2 = {k for k in keys2 if pattern.search(k)}
+
+    # Detect types
+    has_experts_1 = any("mlp.experts." in k and "lora_" in k for k in keys1)
+    has_lora_params_1 = any("lora_params." in k for k in keys1)
+    has_experts_2 = any("mlp.experts." in k and "lora_" in k for k in keys2)
+    has_lora_params_2 = any("lora_params." in k for k in keys2)
+
+    print(f"\n{'=' * 70}")
+    print("LoRA 参数值比较")
+    print("=" * 70)
+    print(f"文件1: {len(keys1)} lora params (PEFT={has_experts_1}, KT={has_lora_params_1})")
+    print(f"文件2: {len(keys2)} lora params (PEFT={has_experts_2}, KT={has_lora_params_2})")
+
+    # Case: one PEFT + one KT -> cross-compare
+    if (has_experts_1 and has_lora_params_2) or (has_experts_2 and has_lora_params_1):
+        if has_experts_1 and has_lora_params_2:
+            ref_lora, kt_lora = lora1, lora2
+            print("模式: PEFT(文件1) vs KT(文件2) — 按 expert 拆开对比")
+        else:
+            ref_lora, kt_lora = lora2, lora1
+            print("模式: PEFT(文件2) vs KT(文件1) — 按 expert 拆开对比")
+
+        kt_to_peft = {
+            "gate_lora_a": ("gate_proj", "lora_A"),
+            "gate_lora_b": ("gate_proj", "lora_B"),
+            "up_lora_a": ("up_proj", "lora_A"),
+            "up_lora_b": ("up_proj", "lora_B"),
+            "down_lora_a": ("down_proj", "lora_A"),
+            "down_lora_b": ("down_proj", "lora_B"),
+        }
+
+        layer_pat = re.compile(r"layers\.(\d+)\.mlp\.lora_params\.")
+        layer_indices = sorted(set(int(m.group(1)) for k in kt_lora for m in [layer_pat.search(k)] if m))
+
+        if layer_filter:
+            filt = re.compile(layer_filter)
+            layer_indices = [i for i in layer_indices if filt.search(f"layers.{i}")]
+
+        print("-" * 70)
+        all_results = []
+
+        for layer_idx in layer_indices:
+            layer_results = []
+            for kt_suffix, (proj, lora_type) in kt_to_peft.items():
+                kt_key = f"base_model.model.model.layers.{layer_idx}.mlp.lora_params.{kt_suffix}"
+                if kt_key not in kt_lora:
+                    print(f"缺少 KT key: {kt_key}")
+                    continue   
+                kt_val = kt_lora[kt_key].float()
+                num_experts = kt_val.shape[0]
+
+                for exp_idx in range(num_experts):
+                    peft_key = (
+                        f"base_model.model.model.layers.{layer_idx}.mlp.experts.{exp_idx}"
+                        f".{proj}.{lora_type}.default.weight"
+                    )
+                    if peft_key not in ref_lora:
+                        print(f"缺少 PEFT key: {peft_key}")
+                        continue
+                    ref_v = ref_lora[peft_key].float()
+                    kt_e = kt_val[exp_idx]
+
+                    rn = ref_v.norm().item()
+                    kn = kt_e.norm().item()
+                    if rn < 1e-12 and kn < 1e-12:
+                        cos = 1.0
+                    else:
+                        cos = F.cosine_similarity(
+                            ref_v.flatten().unsqueeze(0), kt_e.flatten().unsqueeze(0)
+                        ).item()
+                    diff_max = (ref_v - kt_e).abs().max().item()
+                    layer_results.append((kt_suffix, exp_idx, rn, kn, cos, diff_max))
+
+            if not layer_results:
+                continue
+
+            cos_vals = [r[4] for r in layer_results]
+            diff_vals = [r[5] for r in layer_results]
+            print(f"\nLayer {layer_idx:>2}: compared={len(layer_results)}, "
+                  f"cos=[{min(cos_vals):.4f}, {max(cos_vals):.4f}] mean={sum(cos_vals)/len(cos_vals):.4f}, "
+                  f"abs_max_diff=[{min(diff_vals):.4e}, {max(diff_vals):.4e}]")
+
+            # Show anomalies (cos < 0.99 or diff > threshold)
+            anomalies = [(s, e, rn, kn, c, d) for s, e, rn, kn, c, d in layer_results
+                         if d > threshold]
+            for s, e, rn, kn, c, d in anomalies:
+                print(f"    {s:<15} expert={e:<3} ref_norm={rn:.6e} kt_norm={kn:.6e} cos={c:.6f} abs_max={d:.4e}")
+
+            all_results.extend(layer_results)
+
+        if all_results:
+            cos_all = [r[4] for r in all_results]
+            diff_all = [r[5] for r in all_results]
+            n_bad = sum(1 for r in all_results if r[4] < 0.99 or r[5] > threshold)
+            print(f"\nMLP Expert LoRA 全局汇总: total={len(all_results)}, anomalies={n_bad}")
+            print(f"  cos: min={min(cos_all):.6f}, mean={sum(cos_all)/len(cos_all):.6f}, max={max(cos_all):.6f}")
+            print(f"  abs_max_diff: min={min(diff_all):.4e}, max={max(diff_all):.4e}")
+
+        # ============================================================
+        # 比较 Attention LoRA (self_attn 模块的 q/k/v/o_proj LoRA)
+        # 两个文件都应该有相同格式的 attention LoRA，直接比较
+        # ============================================================
+        print(f"\n{'=' * 70}")
+        print("Attention LoRA 参数值比较")
+        print("=" * 70)
+
+        # Find attention LoRA keys (exclude mlp/experts)
+        attn_pattern = re.compile(r"layers\.(\d+)\.self_attn\.([\w_]+)\.lora_([AB])\.default\.weight")
+
+        def get_attn_lora_keys(lora_dict):
+            keys = {}
+            for k in lora_dict.keys():
+                m = attn_pattern.search(k)
+                if m:
+                    layer_idx, proj, lora_type = m.groups()
+                    key_tuple = (int(layer_idx), proj, lora_type)
+                    keys[key_tuple] = k
+            return keys
+
+        attn_keys1 = get_attn_lora_keys(lora1)
+        attn_keys2 = get_attn_lora_keys(lora2)
+
+        common_attn_keys = set(attn_keys1.keys()) & set(attn_keys2.keys())
+
+        if layer_filter:
+            filt = re.compile(layer_filter)
+            common_attn_keys = {k for k in common_attn_keys if filt.search(f"layers.{k[0]}")}
+
+        print(f"文件1 attention LoRA params: {len(attn_keys1)}")
+        print(f"文件2 attention LoRA params: {len(attn_keys2)}")
+        print(f"共同 params: {len(common_attn_keys)}")
+        print("-" * 70)
+
+        attn_results = []
+        if common_attn_keys:
+            # Group by layer
+            attn_layer_indices = sorted(set(k[0] for k in common_attn_keys))
+
+            for layer_idx in attn_layer_indices:
+                layer_results = []
+                layer_keys = sorted([k for k in common_attn_keys if k[0] == layer_idx], key=lambda x: (x[1], x[2]))
+
+                for key_tuple in layer_keys:
+                    k1 = attn_keys1[key_tuple]
+                    k2 = attn_keys2[key_tuple]
+
+                    v1 = lora1[k1].float()
+                    v2 = lora2[k2].float()
+
+                    # Handle shape mismatch
+                    if v1.shape != v2.shape:
+                        print(f"  Shape mismatch: layer={layer_idx}, {key_tuple[1]}.lora_{key_tuple[2]}: "
+                              f"{list(v1.shape)} vs {list(v2.shape)}")
+                        continue
+
+                    n1 = v1.norm().item()
+                    n2 = v2.norm().item()
+
+                    if n1 < 1e-12 and n2 < 1e-12:
+                        cos = 1.0
+                        diff_max = 0.0
+                    else:
+                        cos = F.cosine_similarity(v1.flatten().unsqueeze(0), v2.flatten().unsqueeze(0)).item()
+                        diff_max = (v1 - v2).abs().max().item()
+
+                    layer_results.append((key_tuple[1], key_tuple[2], n1, n2, cos, diff_max))
+
+                if layer_results:
+                    cos_vals = [r[4] for r in layer_results]
+                    diff_vals = [r[5] for r in layer_results]
+                    n_anomaly = sum(1 for r in layer_results if r[4] < 0.99 or r[5] > threshold)
+
+                    print(f"\nLayer {layer_idx:>2}: compared={len(layer_results)}, anomalies={n_anomaly}, "
+                          f"cos=[{min(cos_vals):.4f}, {max(cos_vals):.4f}], "
+                          f"abs_max_diff=[{min(diff_vals):.4e}, {max(diff_vals):.4e}]")
+
+                    # Show details for each proj
+                    for proj, lora_type, n1, n2, cos, diff_max in layer_results:
+                        status = "✓" if cos > 0.99 and diff_max <= threshold else "✗"
+                        print(f"    [{status}] {proj}.lora_{lora_type}: "
+                              f"norm1={n1:.4e}, norm2={n2:.4e}, cos={cos:.6f}, abs_max={diff_max:.4e}")
+
+                    attn_results.extend(layer_results)
+
+            # Attention global summary
+            if attn_results:
+                attn_cos_all = [r[4] for r in attn_results]
+                attn_diff_all = [r[5] for r in attn_results]
+                attn_n_bad = sum(1 for r in attn_results if r[4] < 0.99 or r[5] > threshold)
+                print(f"\nAttention LoRA 全局汇总: total={len(attn_results)}, anomalies={attn_n_bad}")
+                print(f"  cos: min={min(attn_cos_all):.6f}, mean={sum(attn_cos_all)/len(attn_cos_all):.6f}, max={max(attn_cos_all):.6f}")
+                print(f"  abs_max_diff: min={min(attn_diff_all):.4e}, max={max(attn_diff_all):.4e}")
+
+        # ============================================================
+        # 比较 Gate (Router) LoRA
+        # ============================================================
+        print(f"\n{'=' * 70}")
+        print("Gate (Router) LoRA 参数值比较")
+        print("=" * 70)
+
+        gate_pattern = re.compile(r"layers\.(\d+)\.mlp\.gate\.lora_([AB])\.default\.weight")
+
+        def get_gate_lora_keys(lora_dict):
+            keys = {}
+            for k in lora_dict.keys():
+                m = gate_pattern.search(k)
+                if m:
+                    layer_idx, lora_type = m.groups()
+                    key_tuple = (int(layer_idx), lora_type)
+                    keys[key_tuple] = k
+            return keys
+
+        gate_keys1 = get_gate_lora_keys(lora1)
+        gate_keys2 = get_gate_lora_keys(lora2)
+
+        common_gate_keys = set(gate_keys1.keys()) & set(gate_keys2.keys())
+
+        if layer_filter:
+            filt = re.compile(layer_filter)
+            common_gate_keys = {k for k in common_gate_keys if filt.search(f"layers.{k[0]}")}
+
+        print(f"文件1 gate LoRA params: {len(gate_keys1)}")
+        print(f"文件2 gate LoRA params: {len(gate_keys2)}")
+        print(f"共同 params: {len(common_gate_keys)}")
+        print("-" * 70)
+
+        gate_results = []
+        if common_gate_keys:
+            gate_layer_indices = sorted(set(k[0] for k in common_gate_keys))
+
+            for layer_idx in gate_layer_indices:
+                layer_keys = sorted([k for k in common_gate_keys if k[0] == layer_idx], key=lambda x: x[1])
+
+                for key_tuple in layer_keys:
+                    k1 = gate_keys1[key_tuple]
+                    k2 = gate_keys2[key_tuple]
+
+                    v1 = lora1[k1].float()
+                    v2 = lora2[k2].float()
+
+                    if v1.shape != v2.shape:
+                        print(f"  Shape mismatch: layer={layer_idx}, gate.lora_{key_tuple[1]}: "
+                              f"{list(v1.shape)} vs {list(v2.shape)}")
+                        continue
+
+                    n1 = v1.norm().item()
+                    n2 = v2.norm().item()
+
+                    if n1 < 1e-12 and n2 < 1e-12:
+                        cos = 1.0
+                        diff_max = 0.0
+                    else:
+                        cos = F.cosine_similarity(v1.flatten().unsqueeze(0), v2.flatten().unsqueeze(0)).item()
+                        diff_max = (v1 - v2).abs().max().item()
+
+                    status = "✓" if cos > 0.99 and diff_max <= threshold else "✗"
+                    print(f"  [{status}] Layer {layer_idx:>2} gate.lora_{key_tuple[1]}: "
+                          f"norm1={n1:.4e}, norm2={n2:.4e}, cos={cos:.6f}, abs_max={diff_max:.4e}")
+
+                    gate_results.append((layer_idx, key_tuple[1], n1, n2, cos, diff_max))
+
+            if gate_results:
+                gate_cos_all = [r[4] for r in gate_results]
+                gate_diff_all = [r[5] for r in gate_results]
+                gate_n_bad = sum(1 for r in gate_results if r[4] < 0.99 or r[5] > threshold)
+                print(f"\nGate LoRA 全局汇总: total={len(gate_results)}, anomalies={gate_n_bad}")
+                print(f"  cos: min={min(gate_cos_all):.6f}, mean={sum(gate_cos_all)/len(gate_cos_all):.6f}, max={max(gate_cos_all):.6f}")
+                print(f"  abs_max_diff: min={min(gate_diff_all):.4e}, max={max(gate_diff_all):.4e}")
+
+        print("=" * 70)
+
+        # Calculate total results
+        total_passed = 0
+        total_failed = 0
+        if all_results:
+            total_passed += sum(1 for r in all_results if r[4] >= 0.99 and r[5] <= threshold)
+            total_failed += sum(1 for r in all_results if r[4] < 0.99 or r[5] > threshold)
+        if attn_results:
+            total_passed += sum(1 for r in attn_results if r[4] >= 0.99 and r[5] <= threshold)
+            total_failed += sum(1 for r in attn_results if r[4] < 0.99 or r[5] > threshold)
+        if gate_results:
+            total_passed += sum(1 for r in gate_results if r[4] >= 0.99 and r[5] <= threshold)
+            total_failed += sum(1 for r in gate_results if r[4] < 0.99 or r[5] > threshold)
+
+        return {"passed": total_passed, "failed": total_failed}
+
+    # Case: same type -> direct compare on common keys
+    common = sorted(keys1 & keys2)
+    only1 = keys1 - keys2
+    only2 = keys2 - keys1
+
+    print(f"共同: {len(common)}")
+    if only1:
+        s = sorted(only1)
+        print(f"仅在文件1 ({len(only1)}): {s[:5]}{'...' if len(only1) > 5 else ''}")
+    if only2:
+        s = sorted(only2)
+        print(f"仅在文件2 ({len(only2)}): {s[:5]}{'...' if len(only2) > 5 else ''}")
+    print("-" * 70)
+
+    passed = 0
+    failed = 0
+    results_list = []
+
+    for name in common:
+        v1 = lora1[name]
+        v2 = lora2[name]
+        metrics = compute_tensor_metrics(v1, v2)
+        is_passed = not metrics.get("shape_mismatch", False) and metrics.get("abs_max", float("inf")) <= threshold
+        metrics["passed"] = is_passed
+
+        if is_passed:
+            passed += 1
+        else:
+            failed += 1
+            results_list.append((name, metrics))
+
+    # Sort by cosine similarity ascending (worst first)
+    results_list.sort(key=lambda x: x[1].get("cosine_similarity", 1.0))
+
+    for name, metrics in results_list[:30]:
+        cos = metrics.get("cosine_similarity", 0)
+        abs_max = metrics.get("abs_max", 0)
+        abs_mean = metrics.get("abs_mean", 0)
+        print(f"  ✗ {name}: abs_max={abs_max:.4e} abs_mean={abs_mean:.4e} cos={cos:.6f}")
+
+    if len(results_list) > 30:
+        print(f"  ... 还有 {len(results_list) - 30} 项未显示")
+
+    print(f"\n总结: 通过 {passed}, 失败 {failed}")
+
+    # Group by lora type
+    type_cos = {}
+    for name in common:
+        metrics = compute_tensor_metrics(lora1[name], lora2[name])
+        cos = metrics.get("cosine_similarity", None)
+        if cos is None:
+            continue
+        for tag in ["lora_A", "lora_B", "lora_params"]:
+            if tag in name:
+                type_cos.setdefault(tag, []).append(cos)
+                break
+        else:
+            type_cos.setdefault("other", []).append(cos)
+
+    if type_cos:
+        print(f"\n按参数类型汇总 cosine similarity:")
+        for tag in ["lora_A", "lora_B", "lora_params", "other"]:
+            vals = type_cos.get(tag, [])
+            if not vals:
+                continue
+            print(f"  [{tag}] count={len(vals)} mean={sum(vals)/len(vals):.6f} min={min(vals):.6f} max={max(vals):.6f}")
+
+    print("=" * 70)
+    return {"passed": passed, "failed": failed}
+
+
 def main():
     parser = argparse.ArgumentParser(description="比对模型每层输出（支持 forward/backward）")
     parser.add_argument("--file1", "-f1", required=True, help="第一个层输出文件路径")
@@ -1581,6 +2406,12 @@ def main():
                         help="比较参数梯度（param.grad）")
     parser.add_argument("--kt-lora-grads", "-K", action="store_true",
                         help="比较 KT expert LoRA 梯度（将 KT 合并张量拆开与 PEFT 逐 expert 对比）")
+    parser.add_argument("--attn-lora-grads", "-A", action="store_true",
+                        help="比较 Attention LoRA 梯度（self_attn 模块的 q/kv/o_proj LoRA）")
+    parser.add_argument("--lora-params", "-L", action="store_true",
+                        help="比较 LoRA 参数值（支持 PEFT vs PEFT, KT vs KT, PEFT vs KT）")
+    parser.add_argument("--mlp-mismatch", "-M", action="store_true",
+                        help="比较 MLP 输出（处理 token 数量不匹配的情况，如 CPU vs KT 分布式）")
 
     args = parser.parse_args()
 
@@ -1616,8 +2447,20 @@ def main():
     if args.kt_lora_grads:
         compare_kt_lora_grads(data1, data2, layer_filter=args.layer_filter)
 
+    # 比较 Attention LoRA 梯度
+    if args.attn_lora_grads:
+        compare_attn_lora_grads(data1, data2, layer_filter=args.layer_filter)
+
+    # 比较 LoRA 参数值
+    if args.lora_params:
+        compare_lora_params(data1, data2, threshold=args.threshold, layer_filter=args.layer_filter)
+
+    # 比较 MLP 输出（处理 token 数量不匹配）
+    if args.mlp_mismatch:
+        compare_mlp_with_token_mismatch(data1, data2, threshold=args.threshold, layer_filter=args.layer_filter)
+
     # 如果使用了 forward/backward order 或 param-grads 模式，就不再进行常规比对
-    if args.forward_order or args.backward_order or args.param_grads or args.kt_lora_grads:
+    if args.forward_order or args.backward_order or args.param_grads or args.kt_lora_grads or args.attn_lora_grads or args.lora_params or args.mlp_mismatch:
         sys.exit(0)
 
     # 执行比对

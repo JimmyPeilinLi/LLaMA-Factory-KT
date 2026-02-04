@@ -161,6 +161,13 @@ def prepare_model_for_training(model: "PreTrainedModel", model_args: "ModelArgum
         model_args.use_reentrant_gc = False
         logger.warning_rank0("You are using fsdp2, `use_reentrant_gc` has been set to False.")
 
+    if getattr(model_args, "use_kt", False):
+        logger.warning_rank0(
+            "KTransformers MoE is enabled: gradient checkpointing is automatically disabled "
+            "to avoid memory leaks from checkpoint recompute + custom autograd.Function interaction."
+        )
+        model_args.disable_gradient_checkpointing = True
+
     if not model_args.disable_gradient_checkpointing:
         if not getattr(model, "supports_gradient_checkpointing", False):
             logger.warning_rank0("Current model does not support gradient checkpointing.")
