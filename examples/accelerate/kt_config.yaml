@@ -1,0 +1,9 @@
+compute_environment: LOCAL_MACHINE
+# debug: false
+distributed_type: NO
+num_processes: 1 # the number of GPUs in all nodes
+
+
+kt_config:
+  enabled: true
+  kt_max_cache_depth: 2
