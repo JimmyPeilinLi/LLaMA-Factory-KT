@@ -27,7 +27,6 @@ from transformers import (
 )
 from trl import AutoModelForCausalLMWithValueHead
 
-from accelerate.utils import KT_KERNEL_AVAILABLE, load_kt_model
 from ..extras import logging
 from ..extras.misc import count_parameters, skip_check_imports, try_download_model_from_other_hub
 from .adapter import init_adapter
@@ -143,15 +142,6 @@ def load_model(
 
     model = None
     lazy_load = False
-
-    # KTransformers MoE backend (handles MoE layers with CPU AMX acceleration)
-    # if model_args.use_kt:
-    #     if not KT_KERNEL_AVAILABLE:
-    #         raise ImportError(
-    #             "kt_kernel not found. Please install kt_kernel to use 'use_kt'."
-    #         )
-    #     logger.info_rank0("Loading model with KTransformers MoE backend")
-    #     model = load_kt_model(config, model_args, finetuning_args)
 
     if model_args.use_unsloth:
         if model_args.adapter_name_or_path is not None:

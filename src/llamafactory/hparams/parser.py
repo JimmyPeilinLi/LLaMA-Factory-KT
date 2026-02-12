@@ -197,6 +197,57 @@ def _check_extra_dependencies(
             check_version("rouge_chinese", mandatory=True)
 
 
+def _inject_kt_config(
+    model_args: "ModelArguments",
+    data_args: "DataArguments",
+    training_args: "TrainingArguments",
+    finetuning_args: "FinetuningArguments",
+) -> None:
+    """Inject KTransformers config from LLaMA Factory args into TrainingArguments.
+
+    This makes the LLaMA Factory training YAML the single source of truth for all
+    KT parameters, eliminating the need for a separate kt_config section in the
+    accelerate YAML.
+    """
+    if not model_args.use_kt:
+        return
+
+    kt_config_dict = {
+        "enabled": True,
+        "kt_skip_expert_loading": True,
+        "kt_backend": model_args.kt_backend,
+        "kt_num_threads": model_args.kt_num_threads,
+        "kt_tp_enabled": model_args.kt_tp_enabled,
+        "kt_threadpool_count": model_args.kt_threadpool_count,
+        "kt_max_cache_depth": model_args.kt_max_cache_depth,
+        "kt_num_gpu_experts": model_args.kt_num_gpu_experts,
+        "kt_weight_path": model_args.kt_weight_path,
+        "kt_use_lora_experts": model_args.kt_use_lora_experts,
+        "kt_lora_expert_num": model_args.kt_lora_expert_num,
+        "kt_lora_expert_intermediate_size": model_args.kt_lora_expert_intermediate_size,
+        "lora_rank": finetuning_args.lora_rank,
+        "lora_alpha": finetuning_args.lora_alpha,
+        "model_max_length": data_args.cutoff_len,
+    }
+
+    from transformers.integrations.kt import HfTrainerKTConfig
+
+    training_args.hf_kt_config = HfTrainerKTConfig(kt_config_dict)
+    os.environ["ACCELERATE_USE_KT"] = "true"
+
+    if training_args.accelerator_config is not None:
+        training_args.accelerator_config.kt_config = kt_config_dict
+
+    logger.info_rank0(
+        f"Injected KT config from LLaMA Factory args: "
+        f"backend={kt_config_dict['kt_backend']}, "
+        f"threads={kt_config_dict['kt_num_threads']}, "
+        f"lora_rank={kt_config_dict['lora_rank']}, "
+        f"lora_alpha={kt_config_dict['lora_alpha']}, "
+        f"model_max_length={kt_config_dict['model_max_length']}"
+    )
+
+
 def _parse_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS:
     parser = HfArgumentParser(_TRAIN_ARGS)
     allow_extra_keys = is_env_enabled("ALLOW_EXTRA_ARGS")
@@ -459,6 +510,9 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
     model_args.model_max_length = data_args.cutoff_len
     model_args.block_diag_attn = data_args.neat_packing
     data_args.packing = data_args.packing if data_args.packing is not None else finetuning_args.stage == "pt"
+
+    # Inject KT config so LLaMA Factory YAML is the single source of truth
+    _inject_kt_config(model_args, data_args, training_args, finetuning_args)
 
     # Log on each process the small summary
     logger.info(
