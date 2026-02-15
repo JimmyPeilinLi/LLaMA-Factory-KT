@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 
 ### dataset
-dataset: identity
+dataset: cs_arc_challenge, cs_arc_easy, cs_boolq, cs_hellaswag, cs_openbookqa, cs_piqa, cs_social_iqa, cs_winogrande
 template: deepseek3
 cutoff_len: 2048
 max_samples: 100000
@@ -40,7 +40,7 @@ resume_from_checkpoint: null
 
 ### ktransformers (使用 KTMoEWrapper 统一接口)
 use_kt: true                    # 启用 KTransformers MoE 后端
-kt_backend: AMXBF16             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
+kt_backend: AMXINT8             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
 kt_num_threads: 60              # CPU 线程数
 kt_tp_enabled: false             # 启用 NUMA 张量并行
 # kt_threadpool_count: 4          # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效)

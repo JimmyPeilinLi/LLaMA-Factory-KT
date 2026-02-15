@@ -184,6 +184,23 @@ def load_model(
 
     model = init_adapter(config, model, model_args, finetuning_args, is_trainable)
 
+    # KT: move non-expert parts to GPU after PEFT LoRA init.
+    # Model was loaded to CPU (device_map="cpu") to avoid dispatch_model's
+    # meta tensor offloading. Now that PEFT created LoRA weights as real CPU
+    # tensors, we can safely move non-expert modules to GPU.
+    if getattr(model_args, "use_kt", False) and is_trainable:
+        from accelerate.utils.kt_moe import get_moe_arch_config
+
+        from .model_utils.kt_loader import move_non_experts_to_gpu
+
+        moe_config = get_moe_arch_config(config)
+        # init_adapter returns PeftModel; move_non_experts_to_gpu expects
+        # the original PreTrainedModel (accesses model.model.layers)
+        base_model = model.get_base_model() if hasattr(model, "get_base_model") else model
+        move_non_experts_to_gpu(base_model, moe_config)
+        # Set hf_device_map so Trainer skips _move_model_to_device
+        model.hf_device_map = {"non_experts": 0, "experts": "cpu"}
+
     if add_valuehead:
         model = AutoModelForCausalLMWithValueHead.from_pretrained(model)
         patch_valuehead_model(model)

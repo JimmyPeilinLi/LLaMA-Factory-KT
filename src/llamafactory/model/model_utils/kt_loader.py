@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from transformers import PretrainedConfig, PreTrainedModel
 
     from ...hparams import ModelArguments
-    from .kt_moe import MOEArchConfig
+    from accelerate.utils.kt_moe import MOEArchConfig
 
 
 logger = logging.get_logger(__name__)
@@ -117,7 +117,7 @@ def build_kt_device_map(
     Returns:
         device_map dictionary mapping module names to devices
     """
-    from .kt_moe import get_moe_arch_config
+    from accelerate.utils.kt_moe import get_moe_arch_config
 
     moe_config = get_moe_arch_config(config)
     layers_prefix = _get_layers_prefix(config)
@@ -193,7 +193,7 @@ def build_kt_device_map_simplified(
     Returns:
         device_map dictionary
     """
-    from .kt_moe import get_moe_arch_config
+    from accelerate.utils.kt_moe import get_moe_arch_config
 
     moe_config = get_moe_arch_config(config)
     layers_prefix = _get_layers_prefix(config)

@@ -165,6 +165,15 @@ def patch_config(
         if init_kwargs.get("device_map", None) == "auto":
             init_kwargs["offload_folder"] = model_args.offload_folder
 
+        # KT: load entire model to CPU first, then move non-experts to GPU
+        # after PEFT init (in loader.py). We cannot use a mixed device_map
+        # (experts=cpu, others=cuda) because accelerate's dispatch_model
+        # converts CPU-mapped params to meta tensors (offload strategy),
+        # which breaks PEFT LoRA creation on expert modules.
+        if getattr(model_args, "use_kt", False):
+            init_kwargs["device_map"] = "cpu"
+            logger.info_rank0("KT mode: loading model to CPU, will move non-experts to GPU after LoRA init.")
+
 
 def patch_model(
     model: "PreTrainedModel",

@@ -10,7 +10,7 @@ lora_rank: 8
 lora_target: all
 
 ### dataset
-dataset: west_train
+dataset: cs_arc_challenge, cs_arc_easy, cs_boolq, cs_hellaswag, cs_openbookqa, cs_piqa, cs_social_iqa, cs_winogrande
 template: deepseek
 cutoff_len: 2048
 max_samples: 100000
@@ -19,9 +19,9 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/lpl/kernel_new_test_adapter/Kllama_test_deepseekV2_WEST_ALL
+output_dir: /mnt/data/lpl/kernel_new_test_adapter/KFinal_DeepSeekV2_commonsense
 logging_steps: 10
-save_steps: 500
+save_steps: 1000
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
@@ -31,7 +31,7 @@ report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 8
 learning_rate: 1.0e-4
-num_train_epochs: 3
+num_train_epochs: 0.3
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
@@ -41,7 +41,7 @@ resume_from_checkpoint: null
 
 ### ktransformers (使用 KTMoEWrapper 统一接口)
 use_kt: true                    # 启用 KTransformers MoE 后端
-kt_backend: AMXBF16             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
+kt_backend: AMXINT8             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
 kt_num_threads: 60              # CPU 线程数
 kt_tp_enabled: false            # 启用 NUMA 张量并行
 # kt_threadpool_count: 4        # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效，默认=4)

@@ -68,12 +68,14 @@ def _training_function(config: dict[str, Any]) -> None:
         callbacks.append(LayerDebugCallback(finetuning_args))
 
     callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
-    from pyinstrument import Profiler
 
-    print(os.getpid())
+    # pyinstrument profiler: only when kt_debug is enabled
+    profiler = None
+    if getattr(model_args, "kt_debug", False):
+        from pyinstrument import Profiler
 
-    profiler = Profiler()
-    profiler.start()
+        profiler = Profiler()
+        profiler.start()
 
     if finetuning_args.stage in ["pt", "sft", "dpo"] and finetuning_args.use_mca:
         if not is_mcore_adapter_available():
@@ -107,9 +109,10 @@ def _training_function(config: dict[str, Any]) -> None:
         raise ValueError(f"Unknown task: {finetuning_args.stage}.")
 
 
-    profiler.stop()
-    profiler.print()
-    profiler.write_html("profiler_output.html")
+    if profiler is not None:
+        profiler.stop()
+        profiler.print()
+        profiler.write_html("profiler_output.html")
 
     if is_ray_available() and ray.is_initialized():
         return  # if ray is intialized it will destroy the process group on return

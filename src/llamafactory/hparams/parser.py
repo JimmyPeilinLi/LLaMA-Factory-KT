@@ -235,6 +235,13 @@ def _inject_kt_config(
     training_args.hf_kt_config = HfTrainerKTConfig(kt_config_dict)
     os.environ["ACCELERATE_USE_KT"] = "true"
 
+    # Wire kt_debug to ACCELERATE_KT_DEBUG env var (controls [KT DEBUG] logs in kt_moe.py)
+    os.environ["ACCELERATE_KT_DEBUG"] = "1" if model_args.kt_debug else "0"
+    # Also patch the module-level KT_DEBUG (already imported before env var was set)
+    import accelerate.utils.kt_moe as _kt_moe_mod
+
+    _kt_moe_mod.KT_DEBUG = model_args.kt_debug
+
     if training_args.accelerator_config is not None:
         training_args.accelerator_config.kt_config = kt_config_dict
 

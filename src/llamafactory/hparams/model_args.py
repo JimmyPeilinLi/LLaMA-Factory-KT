@@ -542,6 +542,13 @@ class KTransformersArguments:
         default=1024,
         metadata={"help": "Intermediate size of each LoRA Expert MLP."},
     )
+    kt_debug: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable KT debug mode: pyinstrument profiler, [KT DEBUG] logs in forward pass, "
+            "and verbose load-time prints. Disable (default) for production training."
+        },
+    )
 
     def __post_init__(self):
         valid_backends = (
