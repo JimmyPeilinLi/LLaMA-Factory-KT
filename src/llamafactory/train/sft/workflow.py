@@ -112,6 +112,11 @@ def run_sft(
 
     # Training
     if training_args.do_train:
+        if model_args.use_kt:
+            from ...model.model_utils.kt_loader import log_gpu_memory
+
+            log_gpu_memory("before trainer.train() (after FSDP wrap)")
+
         train_result = trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
         trainer.save_model()
         if finetuning_args.include_effective_tokens_per_second:

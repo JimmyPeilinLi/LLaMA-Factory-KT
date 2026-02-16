@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /mnt/data/models/Qwen3-30B-A3B
+model_name_or_path: /mnt/data2/models/Qwen3-235B-A22B-Instruct-2507
 trust_remote_code: true
 
 ### method
@@ -41,12 +41,13 @@ resume_from_checkpoint: null
 
 ### ktransformers (使用 KTMoEWrapper 统一接口)
 use_kt: true                    # 启用 KTransformers MoE 后端
-kt_backend: AMXBF16             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
+kt_backend: AMXINT8             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
 kt_num_threads: 60              # CPU 线程数
 kt_tp_enabled: false             # 启用 NUMA 张量并行
 # kt_threadpool_count: 4          # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效)
 kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU)
 # kt_weight_path: null          # 预处理权重路径 (可选)
+# kt_debug: true                  # 启用 KT 调试模式 (显存/内存监控)
 
 ### eval
 # eval_dataset: alpaca_en_demo

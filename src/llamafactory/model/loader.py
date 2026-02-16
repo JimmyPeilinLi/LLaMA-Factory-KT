@@ -191,15 +191,22 @@ def load_model(
     if getattr(model_args, "use_kt", False) and is_trainable:
         from accelerate.utils.kt_moe import get_moe_arch_config
 
-        from .model_utils.kt_loader import move_non_experts_to_gpu
+        from .model_utils.kt_loader import log_gpu_memory, move_non_experts_to_gpu
+
+        log_gpu_memory("after init_adapter (before move_non_experts)")
 
         moe_config = get_moe_arch_config(config)
         # init_adapter returns PeftModel; move_non_experts_to_gpu expects
         # the original PreTrainedModel (accesses model.model.layers)
         base_model = model.get_base_model() if hasattr(model, "get_base_model") else model
+        # Each FSDP rank must move to its own local GPU device.
+        # move_non_experts_to_gpu defaults to LOCAL_RANK if device is None.
         move_non_experts_to_gpu(base_model, moe_config)
         # Set hf_device_map so Trainer skips _move_model_to_device
-        model.hf_device_map = {"non_experts": 0, "experts": "cpu"}
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        model.hf_device_map = {"non_experts": local_rank, "experts": "cpu"}
+
+        log_gpu_memory("after move_non_experts + hf_device_map set")
 
     if add_valuehead:
         model = AutoModelForCausalLMWithValueHead.from_pretrained(model)

@@ -46,6 +46,39 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
+def log_gpu_memory(tag: str) -> None:
+    """Log GPU and CPU memory usage for debugging KT loading.
+
+    Wrapped in try/except so debug logging never crashes the training.
+    """
+    try:
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        rank = int(os.environ.get("RANK", "0"))
+
+        gpu_lines = []
+        for i in range(torch.cuda.device_count()):
+            alloc = torch.cuda.memory_allocated(i) / 1024**3
+            reserved = torch.cuda.memory_reserved(i) / 1024**3
+            total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+            gpu_lines.append(f"    GPU{i}: alloc={alloc:.2f}G reserved={reserved:.2f}G total={total:.2f}G")
+
+        # CPU memory (RSS of current process)
+        try:
+            import psutil
+            cpu_rss = psutil.Process().memory_info().rss / 1024**3
+            cpu_info = f"CPU RSS={cpu_rss:.2f}G"
+        except ImportError:
+            cpu_info = "CPU RSS=N/A (psutil not installed)"
+
+        msg = f"[KT MEM] {tag} | rank={rank} local_rank={local_rank} | {cpu_info}"
+        if gpu_lines:
+            msg += "\n" + "\n".join(gpu_lines)
+
+        logger.info(msg)
+    except Exception as e:
+        logger.warning(f"[KT MEM] Failed to log memory for '{tag}': {e}")
+
+
 # Check if safetensors is available
 try:
     from safetensors import safe_open
@@ -273,7 +306,7 @@ def get_kt_loading_kwargs(
 def move_non_experts_to_gpu(
     model: "PreTrainedModel",
     moe_config: "MOEArchConfig",
-    device: str = "cuda:0",
+    device: str | None = None,
 ) -> None:
     """
     Move all non-expert parameters to GPU after loading.
@@ -284,8 +317,15 @@ def move_non_experts_to_gpu(
     Args:
         model: The loaded model
         moe_config: MoE architecture configuration
-        device: Target GPU device
+        device: Target GPU device. If None, uses LOCAL_RANK to determine the
+                correct device for this process (critical for multi-GPU FSDP).
     """
+    if device is None:
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        device = f"cuda:{local_rank}"
+
+    log_gpu_memory(f"before move_non_experts_to_gpu (target={device})")
+
     # Move embedding and final layers
     model.model.embed_tokens.to(device)
     model.model.norm.to(device)
@@ -324,6 +364,7 @@ def move_non_experts_to_gpu(
         # Keep routed experts on CPU - they will be handled by KT AMX
 
     logger.info(f"Moved non-expert parameters to {device}")
+    log_gpu_memory(f"after move_non_experts_to_gpu (target={device})")
 
 
 # =============================================================================

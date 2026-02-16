@@ -10,7 +10,8 @@ lora_rank: 8
 lora_target: all
 
 ### dataset
-dataset: cs_arc_challenge, cs_arc_easy, cs_boolq, cs_hellaswag, cs_openbookqa, cs_piqa, cs_social_iqa, cs_winogrande
+# dataset: cs_arc_challenge, cs_arc_easy, cs_boolq, cs_hellaswag, cs_openbookqa, cs_piqa, cs_social_iqa, cs_winogrande
+dataset: identity
 template: deepseek3
 cutoff_len: 2048
 max_samples: 100000
@@ -19,9 +20,10 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: saves/Kllama_deepseekV3
+# output_dir: /mnt/data/lpl/kernel_new_test_adapter/KFinal_DeepSeekV3_commonsense
+output_dir: /mnt/data/lpl/kernel_new_test_adapter/Ktest
 logging_steps: 10
-save_steps: 500
+save_steps: 1000
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
@@ -31,7 +33,7 @@ report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 8
 learning_rate: 1.0e-4
-num_train_epochs: 3.0
+num_train_epochs: 0.3
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
