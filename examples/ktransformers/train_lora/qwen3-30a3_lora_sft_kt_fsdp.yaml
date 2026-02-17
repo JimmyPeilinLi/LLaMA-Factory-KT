@@ -1,12 +1,12 @@
 ### model
-model_name_or_path: /mnt/data/models/DeepSeek-V2-Lite-Chat
+model_name_or_path: /mnt/data/models/Qwen3-30B-A3B
 trust_remote_code: true
 
 ### method
 stage: sft
 do_train: true
 finetuning_type: lora
-lora_rank: 8
+lora_rank: 12
 lora_target: all
 
 ### dataset
@@ -19,24 +19,24 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/hxx/kernel_new_test_adapter/Kllama_test_deepseekV2_WEST_ALL
+output_dir: /mnt/data/hxx/kernel_new_test_adapter/Kllama_test_qwen3_30_WEST_ALL_FSDP
 logging_steps: 1
 save_steps: 500
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
-report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+report_to: tensorboard  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 
 ### train
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 1
-learning_rate: 1.0e-4
-num_train_epochs: 0.1
+learning_rate: 1.0e-5
+num_train_epochs: 0.02
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
 ddp_timeout: 180000000
-# disable_gradient_checkpointing: true
+disable_gradient_checkpointing: true
 resume_from_checkpoint: null
 
 ### ktransformers (使用 KTMoEWrapper 统一接口)
@@ -46,9 +46,24 @@ kt_num_threads: 64              # CPU 线程数
 kt_tp_enabled: true            # 启用 NUMA 张量并行
 kt_threadpool_count: 2        # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效，默认=4)
 kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU)
+# kt_moe_lora_device: gpu         # MoE LoRA 参数位置: gpu (推荐) 或 cpu (暂不支持)
 
-# kt_weight_path: /mnt/data3/models/DeepSeek-V2-Lite-INT8  # 预处理权重路径 (可选)
+# flash_attn: fa2                                                                                                                                    
 
+kt_config:
+  enabled: true
+  kt_backend: AMXINT8
+  kt_num_threads: 64
+  kt_tp_enabled: true
+  kt_threadpool_count: 2
+  kt_num_gpu_experts: 0
+  kt_use_lora_experts: false
+  kt_lora_expert_num: 0
+  kt_lora_expert_intermediate_size: 1024
+  lora_rank: 12
+  model_max_length: 15360
+  # kt_skip_expert_loading: true
+  # kt_weight_path: /mnt/data/hxx/q3-235-i8
 ### eval
 # eval_dataset: alpaca_en_demo
 # val_size: 0.1
@@ -56,11 +71,13 @@ kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU)
 # eval_strategy: steps
 # eval_steps: 500
 
+
 layer_debug: true                                                                                                                                                                       
-layer_debug_output_dir: /mnt/data/hxx/layer_outputs_kt                                                                                                                                      
+layer_debug_output_dir: /mnt/data/hxx/layer_outputs_qw3-a30-fsdp                                                                                                                            
 layer_debug_save_forward: true                                                                                                                                                          
 layer_debug_save_backward: true                                                                                                                                                         
 layer_debug_save_input: false                                                                                                                                                           
-layer_debug_save_steps: "0,1,2,3"                                                                                                                                                       
+layer_debug_save_steps: "0,1,2,3,20,40"     
+# layer_debug_save_steps: "3"                                                                                                                                                       
 layer_debug_prefix: kt_debug                                                                                                                                                            
 layer_debug_verbose: false   

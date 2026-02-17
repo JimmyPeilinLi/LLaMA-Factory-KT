@@ -516,6 +516,9 @@ class LayerDebugger:
         if self._model is None:
             return lora_params
 
+        # TP shard info: set by _prepare_tp for sharded LoRA params
+        tp_shard_info = getattr(self._model, '_tp_lora_shard_info', {})
+
         for name, param in self._model.named_parameters():
             # Match PEFT LoRA params (lora_A, lora_B) and KT LoRA params (lora_params.*)
             if "lora" in name.lower():
@@ -528,6 +531,12 @@ class LayerDebugger:
                                 data = data.full_tensor()
                         except ImportError:
                             pass
+                        # Gather TP-sharded LoRA params across ranks
+                        if name in tp_shard_info and dist.is_initialized() and dist.get_world_size() > 1:
+                            shard_dim = tp_shard_info[name]['shard_dim']
+                            gathered = [torch.empty_like(data) for _ in range(dist.get_world_size())]
+                            dist.all_gather(gathered, data.contiguous())
+                            data = torch.cat(gathered, dim=shard_dim)
                         lora_params[name] = data.clone().cpu()
                 except Exception as e:
                     print(f"Warning: Failed to collect lora param {name}: {e}")
@@ -542,6 +551,10 @@ class LayerDebugger:
         """
         if not dist.is_initialized() or dist.get_world_size() <= 1:
             return tensor, [list(tensor.shape)]
+
+        # DTensor cannot be used directly with dist.all_gather; extract local shard first
+        if hasattr(tensor, "to_local"):
+            tensor = tensor.to_local()
 
         world_size = dist.get_world_size()
         device = torch.device(f"cuda:{dist.get_rank()}" if torch.cuda.is_available() else "cpu")

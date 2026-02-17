@@ -265,9 +265,6 @@ def _setup_lora_tuning(
         else:
             target_modules = finetuning_args.lora_target
 
-        if model_args.use_kt:
-            logger.info_rank0(f"KTransformers mode: Applying peft LoRA to modules: {target_modules}")
-
         if finetuning_args.use_llama_pro:
             target_modules = find_expanded_modules(model, target_modules, finetuning_args.freeze_trainable_layers)
 

@@ -62,6 +62,11 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             if getattr(training_args, "fp8_backend", "auto") == "te":
                 patch_accelerator_for_fp8()
 
+        # KT models have mixed CPU/GPU parameters, incompatible with DataParallel.
+        # Force n_gpu=1 to prevent Trainer from wrapping with nn.DataParallel.
+        if getattr(kwargs.get("model"), "_kt_wrappers", None) is not None:
+            training_args._n_gpu = 1
+
         super().__init__(**kwargs)
         if processor is not None:
             # avoid wrong loss under gradient accumulation
@@ -109,10 +114,6 @@ class CustomSeq2SeqTrainer(Seq2SeqTrainer):
             return torch.utils.data.SequentialSampler(self.train_dataset)
 
         return super()._get_train_sampler(*args, **kwargs)
-
-    @override
-    def compute_loss(self, model, inputs, *args, **kwargs):
-        return super().compute_loss(model, inputs, *args, **kwargs)
 
     @override
     def prediction_step(

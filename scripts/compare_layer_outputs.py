@@ -160,6 +160,19 @@ def get_rank_shapes_for_key(data: Dict, key: str) -> Optional[list]:
 def apply_mask_to_tensors(t1: torch.Tensor, t2: torch.Tensor,
                           rs1: Optional[list], rs2: Optional[list]):
     """用 rank_shapes 构建 mask，取两个 mask 的交集，返回仅含有效数据的 1D tensor。"""
+    if t1.shape != t2.shape:
+        # Shapes differ (e.g. different number of gathered ranks) — apply masks separately
+        if rs1:
+            v1 = t1[build_valid_mask(t1, rs1)].flatten()
+        else:
+            v1 = t1.flatten()
+        if rs2:
+            v2 = t2[build_valid_mask(t2, rs2)].flatten()
+        else:
+            v2 = t2.flatten()
+        min_len = min(v1.numel(), v2.numel())
+        return v1[:min_len], v2[:min_len]
+
     mask = torch.ones(t1.shape, dtype=torch.bool)
     if rs1:
         mask = mask & build_valid_mask(t1, rs1)
@@ -1328,9 +1341,11 @@ def save_results(results: Dict, output_path: str):
 
 
 def compare_kt_lora_grads(data1: Dict, data2: Dict, layer_filter: Optional[str] = None):
-    """比较 KT LoRA 梯度（将 KT 的合并张量按 expert 拆开与 PEFT 的逐 expert 梯度对比）
+    """比较 MLP Expert LoRA 梯度
 
-    自动检测哪个文件是 ref（含 experts.X.proj.lora_A/B），哪个是 KT（含 lora_params.xxx_lora_a/b）。
+    支持两种模式:
+    1. 两个文件都是 PEFT 格式 (experts.X.proj.lora_A/B) - 直接比较
+    2. 一个 PEFT + 一个旧版 KT (lora_params.xxx_lora_a/b) - 拆开比较
     """
     import re
     import torch.nn.functional as F
@@ -1338,20 +1353,120 @@ def compare_kt_lora_grads(data1: Dict, data2: Dict, layer_filter: Optional[str] 
     grads1 = data1.get("param_grads", {})
     grads2 = data2.get("param_grads", {})
 
-    # Detect which file is ref (PEFT per-expert) and which is KT (merged lora_params)
+    # Detect format of each file
     has_experts_1 = any("mlp.experts." in k and "lora_" in k for k in grads1)
     has_lora_params_1 = any("lora_params." in k for k in grads1)
     has_experts_2 = any("mlp.experts." in k and "lora_" in k for k in grads2)
     has_lora_params_2 = any("lora_params." in k for k in grads2)
 
+    def _to_tensor(v):
+        """Convert DTensor to plain Tensor if needed."""
+        try:
+            from torch.distributed.tensor import DTensor
+            if isinstance(v, DTensor):
+                return v._local_tensor
+        except ImportError:
+            pass
+        return v
+
+    print("\n" + "=" * 90)
+    print("MLP Expert LoRA 梯度比较")
+    print("=" * 90)
+    print(f"文件1: PEFT={has_experts_1}, 旧版KT={has_lora_params_1}")
+    print(f"文件2: PEFT={has_experts_2}, 旧版KT={has_lora_params_2}")
+
+    # Case 1: Both files are PEFT format - direct comparison
+    if has_experts_1 and has_experts_2 and not has_lora_params_1 and not has_lora_params_2:
+        print("模式: 两个文件都是 PEFT 格式，直接比较")
+
+        # Find all expert LoRA keys
+        expert_pattern = re.compile(
+            r"layers\.(\d+)\.mlp\.experts\.(\d+)\.(gate_proj|up_proj|down_proj)\.lora_([AB])\..*\.weight"
+        )
+
+        keys1 = {k for k in grads1 if expert_pattern.search(k)}
+        keys2 = {k for k in grads2 if expert_pattern.search(k)}
+
+        if layer_filter:
+            filt = re.compile(layer_filter)
+            keys1 = {k for k in keys1 if filt.search(k)}
+            keys2 = {k for k in keys2 if filt.search(k)}
+
+        common_keys = keys1 & keys2
+        print(f"文件1 expert LoRA grads: {len(keys1)}")
+        print(f"文件2 expert LoRA grads: {len(keys2)}")
+        print(f"共同 keys: {len(common_keys)}")
+        print("-" * 90)
+
+        if not common_keys:
+            print("没有共同的 expert LoRA 梯度")
+            return
+
+        # Group by layer
+        layer_results_map = {}
+        for k in sorted(common_keys):
+            m = expert_pattern.search(k)
+            if not m:
+                continue
+            layer_idx = int(m.group(1))
+            expert_idx = int(m.group(2))
+            proj = m.group(3)
+            lora_type = m.group(4)
+
+            v1 = _to_tensor(grads1[k]).float()
+            v2 = _to_tensor(grads2[k]).float()
+
+            n1 = v1.norm().item()
+            n2 = v2.norm().item()
+
+            if n1 < 1e-12 and n2 < 1e-12:
+                cos = 1.0
+                diff_max = 0.0
+            else:
+                cos = F.cosine_similarity(v1.flatten().unsqueeze(0), v2.flatten().unsqueeze(0)).item()
+                diff_max = (v1 - v2).abs().max().item()
+
+            if layer_idx not in layer_results_map:
+                layer_results_map[layer_idx] = []
+            layer_results_map[layer_idx].append((proj, lora_type, expert_idx, n1, n2, cos, diff_max))
+
+        all_results = []
+        for layer_idx in sorted(layer_results_map.keys()):
+            layer_results = layer_results_map[layer_idx]
+            cos_vals = [r[5] for r in layer_results]
+            diff_vals = [r[6] for r in layer_results]
+            n_anomaly = sum(1 for r in layer_results if r[5] < 0.99)
+
+            print(f"\nLayer {layer_idx:>2}: compared={len(layer_results)}, anomalies={n_anomaly}, "
+                  f"cos=[{min(cos_vals):.4f}, {max(cos_vals):.4f}] mean={sum(cos_vals)/len(cos_vals):.4f}, "
+                  f"abs_max_diff=[{min(diff_vals):.4e}, {max(diff_vals):.4e}]")
+
+            # Show anomalies
+            anomalies = [r for r in layer_results if r[5] < 0.99]
+            for proj, lt, exp, n1, n2, cos, diff in anomalies:
+                print(f"    {proj}.lora_{lt} expert={exp:<3} norm1={n1:.6e} norm2={n2:.6e} cos={cos:.6f} diff={diff:.4e}")
+
+            all_results.extend(layer_results)
+
+        if all_results:
+            cos_all = [r[5] for r in all_results]
+            diff_all = [r[6] for r in all_results]
+            n_bad = sum(1 for r in all_results if r[5] < 0.99)
+            print(f"\n{'=' * 90}")
+            print(f"MLP Expert LoRA 梯度汇总: total={len(all_results)}, anomalies={n_bad}")
+            print(f"  cos: min={min(cos_all):.6f}, mean={sum(cos_all)/len(cos_all):.6f}, max={max(cos_all):.6f}")
+            print(f"  abs_max_diff: min={min(diff_all):.4e}, max={max(diff_all):.4e}")
+        return
+
+    # Case 2: One PEFT + one old KT (lora_params) - cross compare
     if has_experts_1 and has_lora_params_2:
         ref_grads, kt_grads = grads1, grads2
-        print("检测: 文件1=ref(PEFT per-expert), 文件2=KT(lora_params)")
+        print("模式: 文件1=PEFT, 文件2=旧版KT(lora_params)")
     elif has_experts_2 and has_lora_params_1:
         ref_grads, kt_grads = grads2, grads1
-        print("检测: 文件2=ref(PEFT per-expert), 文件1=KT(lora_params)")
+        print("模式: 文件2=PEFT, 文件1=旧版KT(lora_params)")
     else:
-        print("错误: 无法检测 ref/KT 文件（需要一个含 experts.X.lora，一个含 lora_params）")
+        print("错误: 无法检测文件格式")
         return
 
     # KT key suffix -> (PEFT proj name, PEFT lora type)
@@ -1372,19 +1487,7 @@ def compare_kt_lora_grads(data1: Dict, data2: Dict, layer_filter: Optional[str] 
         filt = re.compile(layer_filter)
         layer_indices = [i for i in layer_indices if filt.search(f"layers.{i}")]
 
-    print("\n" + "=" * 90)
-    print("KT Expert LoRA 梯度比较 (KT merged tensor vs PEFT per-expert)")
-    print("=" * 90)
-
-    def _to_tensor(v):
-        """Convert DTensor to plain Tensor if needed."""
-        try:
-            from torch.distributed.tensor import DTensor
-            if isinstance(v, DTensor):
-                return v._local_tensor
-        except ImportError:
-            pass
-        return v
+    print("-" * 90)
 
     all_results = []  # (layer, kt_suffix, expert, ref_norm, kt_norm, ratio, cos)
 
@@ -2377,6 +2480,76 @@ def compare_lora_params(
             if not vals:
                 continue
             print(f"  [{tag}] count={len(vals)} mean={sum(vals)/len(vals):.6f} min={min(vals):.6f} max={max(vals):.6f}")
+
+    # Per-layer breakdown: mlp vs attn, lora_A vs lora_B
+    layer_pat = re.compile(r"layers\.(\d+)\.")
+    # Each entry: {"attn_A": [(cos, n1, n2), ...], ...}
+    layer_groups = {}
+    for name in common:
+        m = layer_pat.search(name)
+        if not m:
+            continue
+        layer_idx = int(m.group(1))
+        if layer_idx not in layer_groups:
+            layer_groups[layer_idx] = {"attn_A": [], "attn_B": [], "mlp_A": [], "mlp_B": []}
+        v1 = lora1[name].float()
+        v2 = lora2[name].float()
+        n1 = v1.norm().item()
+        n2 = v2.norm().item()
+        if n1 < 1e-12 and n2 < 1e-12:
+            cos = 1.0
+        else:
+            cos = F.cosine_similarity(v1.flatten().unsqueeze(0), v2.flatten().unsqueeze(0)).item()
+        is_attn = "self_attn" in name
+        is_mlp = "mlp" in name or "expert" in name
+        is_A = "lora_A" in name
+        if is_attn:
+            layer_groups[layer_idx]["attn_A" if is_A else "attn_B"].append((cos, n1, n2))
+        elif is_mlp:
+            layer_groups[layer_idx]["mlp_A" if is_A else "mlp_B"].append((cos, n1, n2))
+
+    if layer_groups:
+        print(f"\n{'=' * 90}")
+        print("Per-layer cosine similarity (mean) and L2 norm (file1 / file2)")
+        print(f"{'Layer':>5}  {'attn_A cos':>10} {'attn_B cos':>10} {'mlp_A cos':>10} {'mlp_B cos':>10}  {'attn_B norm':>16} {'mlp_B norm':>16}")
+        print("-" * 90)
+        for layer_idx in sorted(layer_groups.keys()):
+            g = layer_groups[layer_idx]
+            cos_parts = []
+            for key in ["attn_A", "attn_B", "mlp_A", "mlp_B"]:
+                vals = g[key]
+                if vals:
+                    cos_parts.append(f"{sum(v[0] for v in vals)/len(vals):10.4f}")
+                else:
+                    cos_parts.append(f"{'—':>10}")
+            # Norms for lora_B only (lora_A is always cos=1.0)
+            norm_parts = []
+            for key in ["attn_B", "mlp_B"]:
+                vals = g[key]
+                if vals:
+                    n1_sum = sum(v[1]**2 for v in vals)**0.5
+                    n2_sum = sum(v[2]**2 for v in vals)**0.5
+                    norm_parts.append(f"{n1_sum:7.4f}/{n2_sum:7.4f}")
+                else:
+                    norm_parts.append(f"{'—':>16}")
+            print(f"{layer_idx:5d}  {''.join(cos_parts)}  {'  '.join(norm_parts)}")
+
+        # Overall averages
+        print("-" * 90)
+        row_cos = []
+        for key in ["attn_A", "attn_B", "mlp_A", "mlp_B"]:
+            all_vals = [v[0] for g in layer_groups.values() for v in g[key]]
+            row_cos.append(f"{sum(all_vals)/len(all_vals):10.4f}" if all_vals else f"{'—':>10}")
+        row_norm = []
+        for key in ["attn_B", "mlp_B"]:
+            all_vals = [(v[1], v[2]) for g in layer_groups.values() for v in g[key]]
+            if all_vals:
+                n1_total = sum(v[0]**2 for v in all_vals)**0.5
+                n2_total = sum(v[1]**2 for v in all_vals)**0.5
+                row_norm.append(f"{n1_total:7.4f}/{n2_total:7.4f}")
+            else:
+                row_norm.append(f"{'—':>16}")
+        print(f"{'avg':>5}  {''.join(row_cos)}  {'  '.join(row_norm)}")
 
     print("=" * 70)
     return {"passed": passed, "failed": failed}

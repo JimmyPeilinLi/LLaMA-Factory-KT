@@ -3,7 +3,18 @@ compute_environment: LOCAL_MACHINE
 distributed_type: NO
 num_processes: 1 # the number of GPUs in all nodes
 
-
 kt_config:
   enabled: true
+  kt_backend: AMXINT8
+  kt_num_threads: 64
+  kt_tp_enabled: true
+  kt_threadpool_count: 2
+  kt_num_gpu_experts: 0
   kt_max_cache_depth: 2
+  kt_use_lora_experts: false
+  kt_lora_expert_num: 0
+  kt_lora_expert_intermediate_size: 1024
+  # lora_rank: auto (bridged from training YAML's lora_rank)
+  # lora_alpha: auto (defaults to lora_rank * 2)
+  # kt_weight_path: auto (bridged from training YAML's kt_weight_path)
+  model_max_length: 15360

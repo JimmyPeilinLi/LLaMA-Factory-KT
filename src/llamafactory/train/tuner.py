@@ -36,6 +36,8 @@ from .rm import run_rm
 from .sft import run_sft
 from .trainer_utils import get_ray_trainer, get_swanlab_callback
 
+from pathlib import Path
+
 
 if is_ray_available():
     import ray
@@ -68,12 +70,6 @@ def _training_function(config: dict[str, Any]) -> None:
         callbacks.append(LayerDebugCallback(finetuning_args))
 
     callbacks.append(ReporterCallback(model_args, data_args, finetuning_args, generating_args))  # add to last
-    from pyinstrument import Profiler
-
-    print(os.getpid())
-
-    profiler = Profiler()
-    profiler.start()
 
     if finetuning_args.stage in ["pt", "sft", "dpo"] and finetuning_args.use_mca:
         if not is_mcore_adapter_available():
@@ -94,7 +90,11 @@ def _training_function(config: dict[str, Any]) -> None:
     elif finetuning_args.stage == "pt":
         run_pt(model_args, data_args, training_args, finetuning_args, callbacks)
     elif finetuning_args.stage == "sft":
+        # with torch.autograd.profiler.profile() as p:
         run_sft(model_args, data_args, training_args, finetuning_args, generating_args, callbacks)
+        # rank = dist.get_rank() if dist.is_initialized() else 0
+        # p.export_chrome_trace(f"pt_trace_rank{rank}.json")
+
     elif finetuning_args.stage == "rm":
         run_rm(model_args, data_args, training_args, finetuning_args, callbacks)
     elif finetuning_args.stage == "ppo":
@@ -107,9 +107,7 @@ def _training_function(config: dict[str, Any]) -> None:
         raise ValueError(f"Unknown task: {finetuning_args.stage}.")
 
 
-    profiler.stop()
-    profiler.print()
-    profiler.write_html("profiler_output.html")
+
 
     if is_ray_available() and ray.is_initialized():
         return  # if ray is intialized it will destroy the process group on return
@@ -137,7 +135,22 @@ def run_exp(args: Optional[dict[str, Any]] = None, callbacks: Optional[list["Tra
         )
         trainer.fit()
     else:
-        _training_function(config={"args": args, "callbacks": callbacks})
+        from pyinstrument import Profiler, renderers
+        print(os.getpid())
+
+        profiler = Profiler()
+        profiler.start()
+        try:
+            _training_function(config={"args": args, "callbacks": callbacks})
+        finally:
+            profiler.stop()
+            rank = dist.get_rank() if dist.is_initialized() else 0
+            if rank == 0:
+                profiler.print()
+            Path(f"in_trace_rank{rank}.json").write_text(
+                    profiler.output(renderers.JSONRenderer(show_all= True, timeline= True)) ,encoding="utf-8")
+            # print(profiler.output(renderers.JSONRenderer()))
+
 
 
 def export_model(args: Optional[dict[str, Any]] = None) -> None:

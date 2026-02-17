@@ -143,6 +143,22 @@ def _verify_model_args(
         model_args.use_fast_tokenizer = False
 
 
+def _bridge_kt_env_vars(model_args: "ModelArguments", finetuning_args: "FinetuningArguments") -> None:
+    """Bridge LLaMA-Factory KT/LoRA args to accelerate KTransformersPlugin via env vars.
+
+    Only sets env vars that are NOT already set (i.e. not already provided by kt_config.yaml),
+    so the accelerate config file always takes precedence.
+    """
+    mapping = {
+        "ACCELERATE_KT_WEIGHT_PATH": getattr(model_args, "kt_weight_path", None),
+        "ACCELERATE_KT_LORA_RANK": getattr(finetuning_args, "lora_rank", None),
+        "ACCELERATE_KT_LORA_ALPHA": getattr(finetuning_args, "lora_alpha", None),
+    }
+    for env_key, value in mapping.items():
+        if value is not None and env_key not in os.environ:
+            os.environ[env_key] = str(value)
+
+
 def _check_extra_dependencies(
     model_args: "ModelArguments",
     finetuning_args: "FinetuningArguments",
@@ -468,6 +484,28 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
         f"compute dtype: {str(model_args.compute_dtype)}"
     )
     transformers.set_seed(training_args.seed)
+
+    # Bridge LLaMA-Factory KT args → accelerate KTransformersPlugin via env vars.
+    # This ensures KTransformersPlugin picks up values that are only known to LLaMA-Factory
+    # (e.g. kt_weight_path, lora_rank) without requiring them to be duplicated in kt_config.yaml.
+    if model_args.use_kt:
+        _bridge_kt_env_vars(model_args, finetuning_args)
+
+        # Also update the HfTrainerKTConfig that was created during TrainingArguments.__post_init__
+        # (before _bridge_kt_env_vars ran). HfTrainerKTConfig reads ACCELERATE_KT_* env vars at
+        # init time, but _bridge_kt_env_vars sets some of them *after* init (e.g. lora_rank,
+        # lora_alpha, kt_weight_path). Patch them into the live config dict so from_pretrained's
+        # KT wrapping sees the correct values.
+        hf_kt = getattr(training_args, "hf_kt_config", None)
+        if hf_kt is not None and hasattr(hf_kt, "_kt_config") and isinstance(hf_kt._kt_config, dict):
+            _late_bridge = {
+                "lora_rank": getattr(finetuning_args, "lora_rank", None),
+                "lora_alpha": getattr(finetuning_args, "lora_alpha", None),
+                "kt_weight_path": getattr(model_args, "kt_weight_path", None),
+            }
+            for key, value in _late_bridge.items():
+                if value is not None and key not in hf_kt._kt_config:
+                    hf_kt._kt_config[key] = value
 
     return model_args, data_args, training_args, finetuning_args, generating_args
 

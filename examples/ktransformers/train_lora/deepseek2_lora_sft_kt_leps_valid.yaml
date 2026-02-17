@@ -1,0 +1,73 @@
+### model
+model_name_or_path: /mnt/data/models/DeepSeek-V2-Lite-Chat
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+
+### dataset
+dataset: identity
+template: deepseek
+cutoff_len: 15360
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+flash_attn: fa2                                                                                                                                    
+### output
+output_dir: /mnt/data/hxx/valid/id-1epo-1e-4-int8-leps
+logging_steps: 1
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+num_train_epochs: 4
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+# disable_gradient_checkpointing: true
+resume_from_checkpoint: null
+
+### ktransformers (使用 KTMoEWrapper 统一接口)
+use_kt: true                    # 启用 KTransformers MoE 后端
+kt_backend: AMXINT8             # AMX 后端类型: AMXBF16, AMXINT8, AMXINT4
+kt_num_threads: 64              # CPU 线程数
+kt_tp_enabled: true            # 启用 NUMA 张量并行
+kt_threadpool_count: 2        # NUMA 子池数量 (仅 kt_tp_enabled=true 时生效，默认=4)
+kt_num_gpu_experts: 0           # GPU 上运行的专家数量 (0=全部在CPU)
+
+
+
+kt_use_lora_experts: true
+kt_lora_expert_num: 2
+kt_lora_expert_intermediate_size: 1024 
+
+# kt_weight_path: /mnt/data3/models/DeepSeek-V2-Lite-INT8  # 预处理权重路径 (可选)
+
+### eval
+# eval_dataset: alpaca_en_demo
+# val_size: 0.1
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 500
+
+# layer_debug: true                                                                                                                                                                       
+# layer_debug_output_dir: /mnt/data/hxx/layer_outputs_kt                                                                                                                                      
+# layer_debug_save_forward: true                                                                                                                                                          
+# layer_debug_save_backward: true                                                                                                                                                         
+# layer_debug_save_input: false                                                                                                                                                           
+# layer_debug_save_steps: "0,1,2,3"                                                                                                                                                       
+# layer_debug_prefix: kt_debug                                                                                                                                                            
+# layer_debug_verbose: false   

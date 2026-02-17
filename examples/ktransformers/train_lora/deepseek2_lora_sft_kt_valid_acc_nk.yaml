@@ -1,0 +1,57 @@
+### model
+model_name_or_path: /mnt/data/models/DeepSeek-V2-Lite-Chat
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_target: all
+
+### dataset
+dataset: identity
+template: deepseek
+cutoff_len: 15360
+max_samples: 100000
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+flash_attn: fa2
+### output
+output_dir: /mnt/data/hxx/valid/id-1epo-1e-4-int8_fsdp_nk
+logging_steps: 1
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+num_train_epochs: 1
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+disable_gradient_checkpointing: false
+resume_from_checkpoint: null
+
+### eval
+# eval_dataset: alpaca_en_demo
+# val_size: 0.1
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 500
+
+# layer_debug: true
+# layer_debug_output_dir: /mnt/data/hxx/layer_outputs_kt_parallel_nk
+# layer_debug_save_forward: true
+# layer_debug_save_backward: true
+# layer_debug_save_input: false
+# layer_debug_save_steps: "0,1,2,3"
+# layer_debug_prefix: kt_debug
+# layer_debug_verbose: false   

@@ -17,6 +17,7 @@ Environment variables:
     SFT_MOE_DUMP=1          Enable C++ intermediate value dump
     SFT_MOE_DUMP_DIR=dir    Directory for C++ dumps
 """
+from torch.autograd import grad
 
 import os
 import sys
@@ -25,6 +26,7 @@ import argparse
 import shutil
 import numpy as np
 from pathlib import Path
+import glob
 
 import torch
 import torch.nn as nn
@@ -71,9 +73,64 @@ def read_matrix_file(filepath: str) -> tuple:
 
     with open(filepath, "rb") as f:
         rows, cols = struct.unpack("ii", f.read(8))
-        data = np.frombuffer(f.read(rows * cols * 4), dtype=np.float32)
+        # NOTE: np.frombuffer creates a non-writable view; copy() avoids torch.from_numpy warnings later.
+        data = np.frombuffer(f.read(rows * cols * 4), dtype=np.float32).copy()
         data = data.reshape(rows, cols)
     return rows, cols, data
+
+
+def read_sharded_cpp_matrix(cpp_dir: str, base_name: str, expert_idx: int, combine: str = "auto") -> np.ndarray:
+    """
+    Read a C++ dump that may be sharded by TP into multiple files:
+        {base_name}_tp0_e{expert}.bin, {base_name}_tp1_e{expert}.bin, ...
+
+    combine:
+      - "first": use tp0 only
+      - "concat_cols": concatenate shards along last dim (TP partitions intermediate_size)
+      - "sum": sum shards elementwise (TP produces partial sums)
+      - "auto": concat if all shards share same rows and differing cols, else sum if shapes match
+    """
+    pattern = os.path.join(cpp_dir, f"{base_name}_tp*_e{expert_idx}.bin")
+    shard_paths = sorted(glob.glob(pattern))
+    if not shard_paths:
+        _, _, data = read_matrix_file(os.path.join(cpp_dir, f"{base_name}_e{expert_idx}.bin"))
+        return data
+
+    shards = []
+    for p in shard_paths:
+        _, _, data = read_matrix_file(p)
+        if data is None:
+            return None
+        shards.append(data)
+
+    if combine == "first":
+        return shards[0]
+    if len(shards) == 1:
+        return shards[0]
+
+    if combine == "concat_cols":
+        # All shards are expected to have identical rows.
+        if len({s.shape[0] for s in shards}) != 1:
+            return shards[0]
+        return np.concatenate(shards, axis=1)
+
+    if combine == "sum":
+        if len({s.shape for s in shards}) != 1:
+            return shards[0]
+        out = shards[0].copy()
+        for s in shards[1:]:
+            out += s
+        return out
+
+    # auto
+    if len({s.shape for s in shards}) == 1:
+        out = shards[0].copy()
+        for s in shards[1:]:
+            out += s
+        return out
+    if len({s.shape[0] for s in shards}) == 1:
+        return np.concatenate(shards, axis=1)
+    return shards[0]
 
 
 def save_matrix_file(filepath: str, data: np.ndarray):
@@ -453,7 +510,13 @@ class PyTorchMoEReference:
 
 def create_kt_wrapper(config, gate_proj, up_proj, down_proj,
                       gate_lora_a, gate_lora_b, up_lora_a, up_lora_b,
-                      down_lora_a, down_lora_b):
+                      down_lora_a, down_lora_b,
+                      grad_gate_lora_a: torch.Tensor,
+                        grad_gate_lora_b: torch.Tensor,
+                        grad_up_lora_a: torch.Tensor,
+                        grad_up_lora_b: torch.Tensor,
+                        grad_down_lora_a: torch.Tensor,
+                        grad_down_lora_b: torch.Tensor,):
     """Create KTMoEWrapper instance"""
     if not HAS_KT_KERNEL:
         print("ERROR: kt_kernel not available")
@@ -496,6 +559,12 @@ def create_kt_wrapper(config, gate_proj, up_proj, down_proj,
         up_lora_b=up_lora_b,
         down_lora_a=down_lora_a,
         down_lora_b=down_lora_b,
+        grad_gate_lora_a=grad_gate_lora_a,
+        grad_gate_lora_b=grad_gate_lora_b,
+        grad_up_lora_a=grad_up_lora_a,
+        grad_up_lora_b=grad_up_lora_b,
+        grad_down_lora_a=grad_down_lora_a,
+        grad_down_lora_b=grad_down_lora_b,
     )
 
     return wrapper
@@ -520,7 +589,7 @@ def run_kt_forward_backward(wrapper, input_tensor, expert_ids, routing_weights, 
     )
 
     # Backward
-    grad_input, grad_loras, grad_weights = wrapper.backward(grad_output)
+    grad_input, grad_weights = wrapper.backward(grad_output)
 
     # Clean up environment
     if dump_dir:
@@ -585,6 +654,7 @@ def main():
                               dtype=torch.bfloat16) * WEIGHT_SCALE).contiguous()
     down_lora_b = (torch.randn(config["expert_num"], config["hidden_size"], config["lora_rank"],
                               dtype=torch.bfloat16) * WEIGHT_SCALE).contiguous()
+    
 
     # Generate test data
     print("\n[Generating test data]")
@@ -622,18 +692,34 @@ def main():
     print(f"  py_output: {py_output.shape}")
     print(f"  py_grad_input: {py_grad_input.shape}")
 
+
+    kt_grad_loras = {
+        "grad_gate_lora_a": torch.zeros_like(gate_lora_a),
+        "grad_gate_lora_b": torch.zeros_like(gate_lora_b),
+        "grad_up_lora_a": torch.zeros_like(up_lora_a),
+        "grad_up_lora_b": torch.zeros_like(up_lora_b),
+        "grad_down_lora_a": torch.zeros_like(down_lora_a),
+        "grad_down_lora_b": torch.zeros_like(down_lora_b),
+    }
+
+
     # Run KT backend
     kt_output = None
     kt_grad_input = None
 
     if not args.skip_kt and HAS_KT_KERNEL:
         print("\n[Running KT backend forward + backward]")
+    # Create KT wrapper
         wrapper = create_kt_wrapper(
-            config, gate_proj, up_proj, down_proj,
-            gate_lora_a, gate_lora_b, up_lora_a, up_lora_b,
-            down_lora_a, down_lora_b
+            config,
+            gate_proj, up_proj, down_proj,
+            gate_lora_a, gate_lora_b,
+            up_lora_a, up_lora_b,
+            down_lora_a, down_lora_b,
+            kt_grad_loras["grad_gate_lora_a"], kt_grad_loras["grad_gate_lora_b"],
+            kt_grad_loras["grad_up_lora_a"], kt_grad_loras["grad_up_lora_b"],
+            kt_grad_loras["grad_down_lora_a"], kt_grad_loras["grad_down_lora_b"],
         )
-
         if wrapper:
             kt_output, kt_grad_input = run_kt_forward_backward(
                 wrapper, input_tensor, expert_ids, routing_weights,
@@ -667,33 +753,34 @@ def main():
                 activated_experts.add(expert_ids[i, j].item())
 
         stages = [
-            ("backward_grad_output", "backward_grad_output_tp0"),
-            ("backward_down_base", "backward_down_base_tp0"),
-            ("backward_grad_intermediate", "backward_grad_intermediate_tp0"),
+            # combine="first": use tp0 only (tp shards are identical inputs)
+            ("backward_grad_output", "backward_grad_output", "first"),
+            # combine="concat_cols": TP partitions intermediate_size across shards
+            ("backward_down_base", "backward_down_base", "concat_cols"),
+            ("backward_grad_intermediate", "backward_grad_intermediate", "concat_cols"),
             # Cached values used in activation backward
-            ("backward_act_gate_cache", "backward_act_gate_cache_tp0"),
-            ("backward_act_up_cache", "backward_act_up_cache_tp0"),
+            ("backward_act_gate_cache", "backward_act_gate_cache", "concat_cols"),
+            ("backward_act_up_cache", "backward_act_up_cache", "concat_cols"),
             # Activation backward outputs
-            ("backward_grad_gate_out", "backward_grad_gate_out_tp0"),
-            ("backward_grad_up_out", "backward_grad_up_out_tp0"),
-            # Gate/Up backward
-            ("backward_gate_base", "backward_gate_base_tp0"),
-            ("backward_up_base", "backward_up_base_tp0"),
-            ("backward_gate_lora_inter", "backward_gate_lora_inter_tp0"),
-            ("backward_gate_lora", "backward_gate_lora_tp0"),
-            ("backward_up_lora_inter", "backward_up_lora_inter_tp0"),
-            ("backward_up_lora", "backward_up_lora_tp0"),
-            ("backward_grad_input_expert", "backward_grad_input_expert_tp0"),
+            ("backward_grad_gate_out", "backward_grad_gate_out", "concat_cols"),
+            ("backward_grad_up_out", "backward_grad_up_out", "concat_cols"),
+            # Gate/Up backward: TP partitions intermediate (and lora_b) so these are partial sums -> sum shards.
+            ("backward_gate_base", "backward_gate_base", "sum"),
+            ("backward_up_base", "backward_up_base", "sum"),
+            ("backward_gate_lora_inter", "backward_gate_lora_inter", "sum"),
+            ("backward_gate_lora", "backward_gate_lora", "sum"),
+            ("backward_up_lora_inter", "backward_up_lora_inter", "sum"),
+            ("backward_up_lora", "backward_up_lora", "sum"),
+            ("backward_grad_input_expert", "backward_grad_input_expert", "sum"),
         ]
 
         for expert_idx in sorted(activated_experts)[:3]:  # Check first 3 experts
             print(f"\n  Expert {expert_idx}:")
-            for py_stage, cpp_stage in stages:
+            for py_stage, cpp_base, combine in stages:
                 py_file = f"{py_dir}/py_{py_stage}_e{expert_idx}.bin"
-                cpp_file = f"{cpp_dir}/{cpp_stage}_e{expert_idx}.bin"
 
                 _, _, py_data = read_matrix_file(py_file)
-                _, _, cpp_data = read_matrix_file(cpp_file)
+                cpp_data = read_sharded_cpp_matrix(cpp_dir, cpp_base, expert_idx, combine=combine)
 
                 if py_data is not None and cpp_data is not None:
                     # Handle shape mismatch (C++ may have padding)
@@ -711,7 +798,7 @@ def main():
                         status = "PASS" if cos_sim > 0.99 else "FAIL"
                         color = "\033[92m" if status == "PASS" else "\033[91m"
                         print(f"    [{color}{status}\033[0m] {py_stage}: "
-                              f"cos_sim={cos_sim:.6f}, abs_max={diff.max().item():.6e}")
+                              f"cos_sim={cos_sim:.6f}, abs_max={diff.max().item():.6e}  norm: {py_t.norm().item():.6e} vs {cpp_t.norm().item():.6e}")
                     else:
                         print(f"    [SHAPE] {py_stage}: py={py_data.shape} vs cpp={cpp_data.shape}")
                 else:

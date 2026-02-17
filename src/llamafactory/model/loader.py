@@ -164,6 +164,15 @@ def load_model(
         init_kwargs["pretrained_model_name_or_path"] = model_args.model_name_or_path
         init_kwargs["torch_dtype"] = "auto"
 
+        # If TP is configured via accelerate parallelism_config, use transformers' native TP
+        # so weights are sharded during loading (not post-hoc in _prepare_tp).
+        _tp_size = int(os.environ.get("PARALLELISM_CONFIG_TP_SIZE", "1"))
+        if _tp_size > 1:
+            init_kwargs["tp_plan"] = "auto"
+            init_kwargs["tp_size"] = _tp_size
+            init_kwargs.pop("device_map", None)  # tp_plan and device_map are mutually exclusive
+            logger.info_rank0(f"Using transformers native TP during loading (tp_size={_tp_size})")
+
         if model_args.mixture_of_depths == "load":
             model = load_mod_pretrained_model(**init_kwargs)
         else:
@@ -181,7 +190,11 @@ def load_model(
             if model_args.train_from_scratch:
                 model = load_class.from_config(config, trust_remote_code=model_args.trust_remote_code)
             else:
+                import torch as _torch_mem
+                _lr = int(os.environ.get("LOCAL_RANK", "0"))
+                print(f"[MEM rank={_lr}] before from_pretrained: alloc={_torch_mem.cuda.memory_allocated(_lr)/1024**2:.0f}MB", flush=True)
                 model = load_class.from_pretrained(**init_kwargs)
+                print(f"[MEM rank={_lr}] after from_pretrained: alloc={_torch_mem.cuda.memory_allocated(_lr)/1024**2:.0f}MB peak={_torch_mem.cuda.max_memory_allocated(_lr)/1024**2:.0f}MB", flush=True)
                 if getattr(model.config, "model_type", None) in ["qwen2_5_omni", "qwen3_omni_moe"]:
                     model = getattr(model, "thinker")
 
