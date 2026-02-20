@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 from types import MethodType
 from typing import TYPE_CHECKING, Any
 
@@ -79,6 +80,184 @@ def patch_youtu_vl_model(model: "PreTrainedModel") -> None:
         return outputs
 
     model.forward = MethodType(forward, model)
+
+
+_zero3_loading_patched = False
+
+
+def _find_multi_shard_layers(checkpoint_files: list[str]) -> set[int]:
+    r"""Read the safetensors index to find model layers whose keys span multiple shards.
+
+    Returns a set of layer IDs that appear in more than one shard file.
+    Returns an empty set if the index cannot be read.
+    """
+    import json
+    import os
+    import re
+    from collections import defaultdict
+
+    model_dir = os.path.dirname(checkpoint_files[0])
+    index_path = os.path.join(model_dir, "model.safetensors.index.json")
+    if not os.path.exists(index_path):
+        return set()
+
+    with open(index_path) as f:
+        index = json.load(f)
+
+    weight_map = index.get("weight_map", {})
+    if not weight_map:
+        return set()
+
+    layer_to_shards: dict[int, set[str]] = defaultdict(set)
+    for key, shard_name in weight_map.items():
+        match = re.search(r"\.layers\.(\d+)\.", key)
+        if match:
+            layer_to_shards[int(match.group(1))].add(shard_name)
+
+    return {layer for layer, shards in layer_to_shards.items() if len(shards) > 1}
+
+
+def patch_zero3_model_loading() -> None:
+    r"""Monkey-patch transformers to load model weights shard-by-shard for DeepSpeed ZeRO-3.
+
+    The default behavior in transformers merges ALL checkpoint shards into a single state_dict
+    before loading into the model. For large models (e.g. 30B+) with multiple processes, this
+    causes a massive CPU memory spike (each process loads the full state_dict ~60GB).
+
+    This patch reduces peak CPU memory by:
+    - For models WITHOUT weight conversions: loads one shard at a time.
+    - For models WITH weight conversions (e.g. MoE expert fusion): separates each shard's keys
+      into "complete layer" keys (loaded immediately per-shard) and "boundary layer" keys
+      (accumulated across shards, then loaded once all source tensors are available).
+    """
+    global _zero3_loading_patched
+    if _zero3_loading_patched:
+        return
+
+    _zero3_loading_patched = True
+
+    import re
+
+    import transformers.modeling_utils as mu
+    from transformers.integrations.deepspeed import _load_state_dict_into_zero3_model
+    from transformers.modeling_utils import LoadStateDictInfo, load_state_dict
+
+    _original_load = PreTrainedModel._load_pretrained_model
+
+    @classmethod
+    def _load_pretrained_model_shard_by_shard(
+        cls,
+        model: "PreTrainedModel",
+        state_dict: dict | None,
+        checkpoint_files: list[str] | None,
+        load_config: "mu.LoadStateDictConfig",
+    ) -> "LoadStateDictInfo":
+        is_quantized = load_config.is_quantized
+
+        # Only intercept the ZeRO-3 branch that loads from checkpoint files
+        if not (is_deepspeed_zero3_enabled() and not is_quantized and state_dict is None and checkpoint_files):
+            return _original_load.__func__(cls, model, state_dict, checkpoint_files, load_config)
+
+        # Check if the model has weight conversions (e.g. MoE expert fusion)
+        weight_mapping = getattr(load_config, "weight_mapping", None)
+        has_weight_converters = False
+        if weight_mapping:
+            from transformers.core_model_loading import WeightConverter
+
+            has_weight_converters = any(isinstance(v, WeightConverter) for v in weight_mapping)
+
+        # If conversions exist, find layers that span multiple shards
+        multi_shard_layers: set[int] = set()
+        if has_weight_converters:
+            multi_shard_layers = _find_multi_shard_layers(checkpoint_files)
+
+        if has_weight_converters and not multi_shard_layers:
+            # Has converters but can't determine boundaries → fall back to original
+            logger.info_rank0("DeepSpeed ZeRO-3: weight converters detected but no shard index found, "
+                              "falling back to default loading.")
+            return _original_load.__func__(cls, model, state_dict, checkpoint_files, load_config)
+
+        logger.info_rank0(
+            f"Loading model weights for DeepSpeed ZeRO-3 "
+            f"({len(checkpoint_files)} shards, low CPU memory mode"
+            f"{f', {len(multi_shard_layers)} boundary layers buffered' if multi_shard_layers else ''})."
+        )
+
+        all_error_msgs = []
+        all_missing_keys = None
+        boundary_buffer: dict = {}  # accumulates keys from layers that span shard boundaries
+
+        for i, ckpt_file in enumerate(checkpoint_files):
+            logger.info_rank0(f"Loading shard {i + 1}/{len(checkpoint_files)}")
+            shard_state_dict = load_state_dict(
+                ckpt_file, map_location="cpu", weights_only=load_config.weights_only
+            )
+
+            if multi_shard_layers:
+                # Separate keys: complete-layer keys vs boundary-layer keys
+                complete_keys = {}
+                for key in list(shard_state_dict.keys()):
+                    match = re.search(r"\.layers\.(\d+)\.", key)
+                    if match and int(match.group(1)) in multi_shard_layers:
+                        boundary_buffer[key] = shard_state_dict.pop(key)
+                    else:
+                        complete_keys[key] = shard_state_dict.pop(key)
+
+                del shard_state_dict
+
+                # Load complete-layer keys immediately (conversions within a shard are self-contained)
+                if complete_keys:
+                    error_msgs, shard_missing = _load_state_dict_into_zero3_model(
+                        model, complete_keys, load_config
+                    )
+                    all_error_msgs.extend(error_msgs)
+                    if all_missing_keys is None:
+                        all_missing_keys = shard_missing
+                    else:
+                        all_missing_keys = all_missing_keys.intersection(shard_missing)
+
+                del complete_keys
+            else:
+                # No conversions: load entire shard directly
+                error_msgs, shard_missing = _load_state_dict_into_zero3_model(
+                    model, shard_state_dict, load_config
+                )
+                all_error_msgs.extend(error_msgs)
+                if all_missing_keys is None:
+                    all_missing_keys = shard_missing
+                else:
+                    all_missing_keys = all_missing_keys.intersection(shard_missing)
+
+                del shard_state_dict
+
+            gc.collect()
+
+        # Load accumulated boundary keys (now complete across all shards)
+        if boundary_buffer:
+            logger.info_rank0(f"Loading {len(boundary_buffer)} buffered boundary-layer keys")
+            error_msgs, buf_missing = _load_state_dict_into_zero3_model(
+                model, boundary_buffer, load_config
+            )
+            all_error_msgs.extend(error_msgs)
+            if all_missing_keys is None:
+                all_missing_keys = buf_missing
+            else:
+                all_missing_keys = all_missing_keys.intersection(buf_missing)
+
+            del boundary_buffer
+            gc.collect()
+
+        return LoadStateDictInfo(
+            missing_keys=all_missing_keys or set(),
+            unexpected_keys=set(),
+            mismatched_keys=set(),
+            disk_offload_index=None,
+            error_msgs=all_error_msgs,
+            conversion_errors=set(),
+        )
+
+    PreTrainedModel._load_pretrained_model = _load_pretrained_model_shard_by_shard
+    logger.info_rank0("Patched model loading for DeepSpeed ZeRO-3 (shard-by-shard mode).")
 
 
 def patch_tokenizer(tokenizer: "PreTrainedTokenizer", model_args: "ModelArguments") -> None:

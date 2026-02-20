@@ -37,7 +37,14 @@ from .model_utils.misc import register_autoclass
 from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretrained_model
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
-from .patcher import patch_config, patch_model, patch_processor, patch_tokenizer, patch_valuehead_model
+from .patcher import (
+    patch_config,
+    patch_model,
+    patch_processor,
+    patch_tokenizer,
+    patch_valuehead_model,
+    patch_zero3_model_loading,
+)
 
 
 if TYPE_CHECKING:
@@ -159,6 +166,9 @@ def load_model(
         init_kwargs["config"] = config
         init_kwargs["pretrained_model_name_or_path"] = model_args.model_name_or_path
         init_kwargs["torch_dtype"] = "auto"
+
+        # Patch model loading to be shard-by-shard for ZeRO-3 (reduces peak CPU memory)
+        patch_zero3_model_loading()
 
         if model_args.mixture_of_depths == "load":
             model = load_mod_pretrained_model(**init_kwargs)
