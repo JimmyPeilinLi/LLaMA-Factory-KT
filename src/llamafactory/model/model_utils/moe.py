@@ -55,12 +55,14 @@ def add_z3_leaf_module(model: "PreTrainedModel") -> None:
         _set_z3_leaf_modules(model, [DbrxFFN])
 
     if model_type == "deepseek_v2":
-        # deepseek v2 uses custom code
-        _set_z3_leaf_modules(model, ["DeepseekV2MoE"])
+        from transformers.models.deepseek_v2.modeling_deepseek_v2 import DeepseekV2Moe
+
+        _set_z3_leaf_modules(model, [DeepseekV2Moe])
 
     if model_type == "deepseek_v3" or model_type == "kimi_vl":
-        # deepseek v3 and kimi vl use custom code
-        _set_z3_leaf_modules(model, ["DeepseekV3MoE"])
+        from transformers.models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3MoE
+
+        _set_z3_leaf_modules(model, [DeepseekV3MoE])
 
     if model_type == "ernie4_5_moe":
         from transformers.models.ernie4_5_moe.modeling_ernie4_5_moe import Ernie4_5_MoeSparseMoeBlock

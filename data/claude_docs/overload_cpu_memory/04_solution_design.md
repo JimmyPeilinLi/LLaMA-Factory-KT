@@ -15,16 +15,41 @@ For MoE models like Qwen3-30B-A3B, some model layers have their checkpoint keys
 spread across multiple shards. Weight conversions (e.g., `gate_proj` + `up_proj` →
 `gate_up_proj`) require ALL source tensors to be present simultaneously.
 
-### Two-Phase Loading Strategy
+### v3 Strategy: Expert/Non-Expert Separation + Boundary Buffering
 
-**Phase 1**: For each shard, classify keys:
-- **Complete-layer keys**: Keys belonging to layers that are fully contained in a
-  single shard → load immediately
-- **Boundary-layer keys**: Keys belonging to layers that span multiple shards →
-  buffer in memory
+**Non-expert keys** (attention, layernorm, embeddings, etc.) are loaded directly per
+shard with `weight_mapping=None` — their checkpoint key names match model key names,
+so no conversion is needed.
 
-**Phase 2**: After all shards are processed, the boundary buffer contains all keys
-for cross-shard layers → load them in one batch.
+**Expert keys** (per-expert gate_proj, up_proj, down_proj) are separated:
+- **Complete-layer expert keys**: layer fully in one shard → convert and load immediately
+- **Boundary-layer expert keys**: layer spans multiple shards → buffer until all shards processed
+
+**Limitation**: For large models (Qwen3-235B) where ALL layers are boundary layers,
+the buffer accumulates the entire expert portion (~423 GiB), defeating the purpose.
+
+### v4 Strategy: Per-Layer Completion Tracking
+
+Instead of buffering ALL boundary-layer expert keys until the end, track expert keys
+per-layer and convert+load each layer as soon as all its expected keys arrive:
+
+```
+_build_boundary_layer_info():
+  Read safetensors index → for each boundary layer, count expected expert keys
+  Returns: {layer_id: expected_expert_key_count}
+
+For each shard:
+  1. Load shard, split expert / non-expert using converter_re
+  2. Non-expert: load immediately (same as v3)
+  3. Expert keys from non-boundary layers: convert and load immediately
+  4. Expert keys from boundary layers: add to per_layer_buffer[layer_id]
+  5. After adding: check each buffered layer —
+     if collected_count >= expected_count:
+       → convert and load immediately, free from buffer
+
+Buffer holds at most 2-3 layers at any time (layers currently straddling a shard
+boundary), regardless of total boundary layer count.
+```
 
 ### How to Identify Boundary Layers
 
@@ -41,20 +66,19 @@ Read `model.safetensors.index.json` which maps every parameter key to its shard 
 ```
 
 A layer is a "boundary layer" if its keys appear in more than one shard file.
+In v4, we also count how many expert keys (matching the converter regex) each
+boundary layer has, enabling completion detection.
 
 ### Memory Trade-off
 
-The boundary buffer still holds data in memory, but only for boundary layers:
-
 | Scenario | Peak Memory Per Process |
 |----------|----------------------|
-| Original (all shards merged) | ~60GB |
-| Shard-by-shard (no conversions) | ~4GB (one shard) |
-| Shard-by-shard + boundary buffer | ~4GB + boundary data |
+| Original (all shards merged) | ~60GB (30B) / ~438 GiB (235B) |
+| v3 shard-by-shard + boundary buffer | ~19GB (30B) / ~423 GiB (235B) |
+| v4 shard-by-shard + per-layer tracking | ~13GB (30B) / ~14 GiB (235B) |
 
-For Qwen3-30B-A3B with ~15 boundary layers:
-- Each MoE layer ≈ 1.25GB → boundary buffer ≈ 19GB
-- Still saves ~41GB per process vs original (~164GB total across 4 processes)
+The v4 buffer size is bounded by: `max_concurrent_boundary_layers × expert_size_per_layer`.
+Typically 2-3 layers at any time, regardless of model size.
 
 ### Implementation Location
 
@@ -89,6 +113,6 @@ found, fall back to the original monolithic loading.
 3. **Lazy loading with safetensors**: Use safetensors' memory-mapping to avoid
    loading entire shards. Possible but requires deeper changes to the loading path.
 
-4. **Stream conversion keys on-demand**: Only buffer the specific keys needed for
-   weight conversion, not entire boundary layers. More complex but more memory
-   efficient. Could be a future optimization.
+4. ~~**Stream conversion keys on-demand**: Only buffer the specific keys needed for
+   weight conversion, not entire boundary layers.~~ → This is essentially what v4
+   does with per-layer tracking.

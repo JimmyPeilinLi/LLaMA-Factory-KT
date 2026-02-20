@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /mnt/data/models/Qwen3-30B-A3B
+model_name_or_path: /mnt/data2/models/Qwen3-235B-A22B-Instruct-2507
 trust_remote_code: true
 
 ### method
@@ -21,7 +21,7 @@ dataloader_num_workers: 4
 ### output
 output_dir: /mnt/data/lpl/kernel_new_test_adapter/zero_lora_qwen3_235b_livebench_math
 logging_steps: 1
-save_steps: 500
+save_steps: 200
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false

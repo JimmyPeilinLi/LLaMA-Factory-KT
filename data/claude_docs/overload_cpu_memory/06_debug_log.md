@@ -118,6 +118,77 @@ per layer, ~few MB) are loaded and freed immediately per shard.
 
 ---
 
+## Issue 3: FrozenInstanceError (v3 → Fixed in v3)
+
+### Error
+
+```
+dataclasses.FrozenInstanceError: cannot assign to field 'weight_mapping'
+```
+
+When trying to create a copy of `LoadStateDictConfig` with `weight_mapping=None`:
+```python
+no_wm_config = copy.copy(load_config)
+no_wm_config.weight_mapping = None  # ← FrozenInstanceError!
+```
+
+### Root Cause
+
+`LoadStateDictConfig` is a frozen dataclass (`@dataclass(frozen=True)`). Normal
+attribute assignment is blocked.
+
+### Fix
+
+Use `object.__setattr__` to bypass the frozen check:
+```python
+object.__setattr__(no_wm_config, "weight_mapping", None)
+```
+
+---
+
+## Issue 4: v3 Ineffective for Large Models (v3 → Fixed in v4)
+
+### Problem
+
+For Qwen3-235B-A22B-Instruct-2507 (94 layers, 118 shards, ALL 94 layers are
+boundary layers), the v3 `expert_boundary_buffer` accumulates the ENTIRE expert
+portion of the model (~423 GiB), providing only ~3.4% savings.
+
+| Metric | Qwen3-30B-A3B | Qwen3-235B-A22B |
+|--------|---------------|-----------------|
+| Boundary layers | 14/48 (29%) | **94/94 (100%)** |
+| v3 buffer size | ~15 GiB | **~423 GiB** |
+| v3 savings/rank | ~39 GiB (65%) | **~15 GiB (3.4%)** |
+
+### Root Cause
+
+The v3 boundary detection is binary: either a layer is fully in one shard (load
+immediately) or it spans shards (buffer ALL until end). For Qwen3-235B, each layer
+has ~384 expert tensors (~4.5 GiB) while each shard is only ~3.7 GiB. EVERY layer
+overflows its shard boundary, so the entire expert portion is buffered.
+
+### Fix (v4): Per-Layer Completion Tracking
+
+Replaced `_find_multi_shard_layers()` (returns `set[int]`) with
+`_build_boundary_layer_info()` (returns `dict[int, int]`: layer_id → expected
+expert key count).
+
+Changed flat `expert_boundary_buffer: dict` to per-layer
+`per_layer_buffer: dict[int, dict]`. After processing each shard, check each
+buffered layer: if collected count >= expected count, immediately convert and load,
+then free from buffer.
+
+**Result**: Buffer limited to 2-3 layers at any time (~9-14 GiB), regardless of
+how many boundary layers exist.
+
+| Metric | v3 (235B) | v4 (235B) |
+|--------|-----------|-----------|
+| Buffer peak | ~423 GiB | **~9-14 GiB** |
+| Peak per rank | ~544 GiB | **~135 GiB** |
+| Savings/rank | ~16 GiB (3%) | **~425 GiB (76%)** |
+
+---
+
 ## Other Issues in the Test Run (Not Related to Our Patch)
 
 ### CUDA Version Mismatch
@@ -150,17 +221,20 @@ Rename environment variable from `PYTORCH_CUDA_ALLOC_CONF` to `PYTORCH_ALLOC_CON
    weight conversions. Should work with the simple path.
 
 2. **MoE model** (Qwen3-30B-A3B): Test shard-by-shard loading with expert key
-   separation and boundary-layer buffering. Verify weight conversions succeed and
+   separation and per-layer tracking. Verify weight conversions succeed and
    NO MISSING keys in the LOAD REPORT.
 
-3. **Memory measurement**: Compare peak CPU memory (RSS) between original and
+3. **Large MoE model** (Qwen3-235B-A22B): Test per-layer completion tracking with
+   all-boundary-layer scenario. Verify buffer stays small (2-3 layers).
+
+4. **Memory measurement**: Compare peak CPU memory (RSS) between original and
    patched loading. Use `psutil` or `/proc/self/status` VmRSS.
 
-4. **Training correctness**: Run a few training steps and verify loss values match
+5. **Training correctness**: Run a few training steps and verify loss values match
    the original loading path.
 
-5. **Single-shard model**: Test with a model that has only one checkpoint file.
+6. **Single-shard model**: Test with a model that has only one checkpoint file.
    Should take the shard-by-shard path but with only one iteration.
 
-6. **Quantized model**: Verify that quantized models correctly fall back to the
+7. **Quantized model**: Verify that quantized models correctly fall back to the
    original loading path.

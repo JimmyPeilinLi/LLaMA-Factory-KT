@@ -85,11 +85,14 @@ def patch_youtu_vl_model(model: "PreTrainedModel") -> None:
 _zero3_loading_patched = False
 
 
-def _find_multi_shard_layers(checkpoint_files: list[str]) -> set[int]:
-    r"""Read the safetensors index to find model layers whose keys span multiple shards.
+def _build_boundary_layer_info(checkpoint_files: list[str], converter_re: "re.Pattern") -> dict[int, int]:
+    r"""For boundary layers (keys spanning multiple shards), count expected expert keys.
 
-    Returns a set of layer IDs that appear in more than one shard file.
-    Returns an empty set if the index cannot be read.
+    Reads the safetensors index to identify which layers span multiple shard files,
+    then counts how many expert keys (matching converter_re) belong to each such layer.
+
+    Returns a dict mapping layer_id to the expected number of expert checkpoint keys.
+    Returns an empty dict if the index cannot be read or no boundary layers exist.
     """
     import json
     import os
@@ -99,22 +102,31 @@ def _find_multi_shard_layers(checkpoint_files: list[str]) -> set[int]:
     model_dir = os.path.dirname(checkpoint_files[0])
     index_path = os.path.join(model_dir, "model.safetensors.index.json")
     if not os.path.exists(index_path):
-        return set()
+        return {}
 
     with open(index_path) as f:
         index = json.load(f)
 
     weight_map = index.get("weight_map", {})
     if not weight_map:
-        return set()
+        return {}
 
     layer_to_shards: dict[int, set[str]] = defaultdict(set)
+    layer_expert_count: dict[int, int] = defaultdict(int)
+
     for key, shard_name in weight_map.items():
         match = re.search(r"\.layers\.(\d+)\.", key)
         if match:
-            layer_to_shards[int(match.group(1))].add(shard_name)
+            layer_id = int(match.group(1))
+            layer_to_shards[layer_id].add(shard_name)
+            if converter_re.search(key):
+                layer_expert_count[layer_id] += 1
 
-    return {layer for layer, shards in layer_to_shards.items() if len(shards) > 1}
+    return {
+        layer: layer_expert_count[layer]
+        for layer, shards in layer_to_shards.items()
+        if len(shards) > 1 and layer in layer_expert_count
+    }
 
 
 def _build_converter_pattern(weight_mapping) -> "re.Pattern | None":
@@ -180,6 +192,18 @@ def patch_zero3_model_loading() -> None:
 
     _original_load = PreTrainedModel._load_pretrained_model
 
+    def _get_rss_gb() -> str:
+        """Get current process RSS in GB."""
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        kb = int(line.split()[1])
+                        return f"{kb / 1024 / 1024:.2f} GB"
+        except Exception:
+            pass
+        return "N/A"
+
     @classmethod
     def _load_pretrained_model_shard_by_shard(
         cls,
@@ -205,10 +229,11 @@ def patch_zero3_model_loading() -> None:
             if has_weight_converters:
                 converter_re = _build_converter_pattern(weight_mapping)
 
-        # Find layers spanning multiple shards (for expert key buffering)
-        multi_shard_layers: set[int] = set()
+        # Find boundary layers and count their expected expert keys (for per-layer tracking)
+        boundary_layer_info: dict[int, int] = {}
         if has_weight_converters:
-            multi_shard_layers = _find_multi_shard_layers(checkpoint_files)
+            boundary_layer_info = _build_boundary_layer_info(checkpoint_files, converter_re)
+        multi_shard_layers = set(boundary_layer_info.keys())
 
         if has_weight_converters and not multi_shard_layers:
             logger.info_rank0(
@@ -220,7 +245,8 @@ def patch_zero3_model_loading() -> None:
         logger.info_rank0(
             f"Loading model weights for DeepSpeed ZeRO-3 "
             f"({len(checkpoint_files)} shards, low CPU memory mode"
-            f"{f', {len(multi_shard_layers)} boundary layers buffered' if multi_shard_layers else ''})."
+            f"{f', {len(multi_shard_layers)} boundary layers with per-layer tracking' if multi_shard_layers else ''})."
+            f" [RSS before loading: {_get_rss_gb()}]"
         )
 
         # Create a load_config copy without weight_mapping so _load_state_dict_into_zero3_model
@@ -234,8 +260,9 @@ def patch_zero3_model_loading() -> None:
 
         all_error_msgs = []
         all_missing_keys = None
-        # Buffer for expert keys from layers that span shard boundaries
-        expert_boundary_buffer: dict = {}
+        # Per-layer buffer for expert keys from boundary layers: layer_id → {key: tensor}
+        per_layer_buffer: dict[int, dict] = {}
+        completed_boundary_layers = 0
 
         def _track_missing(missing_keys_from_call):
             nonlocal all_missing_keys
@@ -285,12 +312,15 @@ def patch_zero3_model_loading() -> None:
                 _load_direct(non_expert_keys)
                 del non_expert_keys
 
-                # Expert keys: split into boundary-layer (buffer) vs complete-layer (convert now)
+                # Expert keys: split into boundary-layer (per-layer buffer) vs complete-layer (convert now)
                 complete_expert_keys = {}
                 for key in list(expert_keys.keys()):
                     match = re.search(r"\.layers\.(\d+)\.", key)
                     if match and int(match.group(1)) in multi_shard_layers:
-                        expert_boundary_buffer[key] = expert_keys.pop(key)
+                        layer_id = int(match.group(1))
+                        if layer_id not in per_layer_buffer:
+                            per_layer_buffer[layer_id] = {}
+                        per_layer_buffer[layer_id][key] = expert_keys.pop(key)
                     else:
                         complete_expert_keys[key] = expert_keys.pop(key)
                 del expert_keys
@@ -299,15 +329,38 @@ def patch_zero3_model_loading() -> None:
                 _convert_and_load(complete_expert_keys)
                 del complete_expert_keys
 
+                # Check for completed boundary layers and load them immediately
+                newly_completed = [
+                    lid for lid in per_layer_buffer
+                    if len(per_layer_buffer[lid]) >= boundary_layer_info[lid]
+                ]
+                for layer_id in sorted(newly_completed):
+                    layer_keys = per_layer_buffer.pop(layer_id)
+                    _convert_and_load(layer_keys)
+                    del layer_keys
+                    completed_boundary_layers += 1
+                if newly_completed:
+                    logger.info_rank0(
+                        f"  Completed {len(newly_completed)} boundary layer(s) "
+                        f"({completed_boundary_layers}/{len(boundary_layer_info)} total, "
+                        f"buffer: {len(per_layer_buffer)} layers)"
+                    )
+
             gc.collect()
 
-        # Convert and load buffered boundary-layer expert keys (now complete across all shards)
-        if expert_boundary_buffer:
-            logger.info_rank0(
-                f"Loading {len(expert_boundary_buffer)} buffered boundary-layer expert keys"
+        # Handle any remaining incomplete boundary layers (shouldn't happen if index is accurate)
+        if per_layer_buffer:
+            remaining_keys = sum(len(keys) for keys in per_layer_buffer.values())
+            logger.warning_rank0(
+                f"Loading {remaining_keys} expert keys from {len(per_layer_buffer)} "
+                f"incomplete boundary layers (may indicate index mismatch)"
             )
-            _convert_and_load(expert_boundary_buffer)
-            del expert_boundary_buffer
+            remaining = {}
+            for layer_keys in per_layer_buffer.values():
+                remaining.update(layer_keys)
+            per_layer_buffer.clear()
+            _convert_and_load(remaining)
+            del remaining
             gc.collect()
 
         return LoadStateDictInfo(
