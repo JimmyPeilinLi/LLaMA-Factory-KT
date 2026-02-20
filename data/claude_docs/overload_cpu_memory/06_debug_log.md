@@ -1,6 +1,6 @@
 # 6. Debug Log
 
-## Issue 1: Weight Conversion RuntimeError (Fixed in v2)
+## Issue 1: Weight Conversion RuntimeError (v1 → Fixed in v2)
 
 ### Error
 
@@ -35,69 +35,112 @@ Implemented boundary-layer buffering (v2):
 
 ---
 
-## Known Potential Issues (Not Yet Tested)
+## Issue 2: ALL Non-Expert Weights MISSING (v2 → Fixed in v3)
 
-### Issue 2: Weight Conversions for Complete-Layer Keys Within a Shard
+### Error
 
-**Concern**: When we call `_load_state_dict_into_zero3_model` with `complete_keys`
-(non-boundary-layer keys from a single shard), the function internally calls
-`_apply_weight_conversions_to_state_dict`. This conversion function processes ALL
-keys in the dict. If some non-boundary layers also have weight conversions (e.g.,
-MoE layers fully contained in a single shard), the conversion should work. But if
-the conversion function's pattern matching picks up keys that don't have all their
-sources present (e.g., non-layer keys or keys with unexpected naming), it could
-fail.
+After the v2 implementation (boundary-layer buffering):
 
-**Mitigation**: Verify that `_apply_weight_conversions_to_state_dict` gracefully
-handles partial state dicts where only some conversions are applicable.
+```
+Qwen3MoeForCausalLM LOAD REPORT from: /mnt/data/models/Qwen3-30B-A3B
+model.layers.{0...47}.self_attn.k_proj.weight         | MISSING |
+model.layers.{0...47}.self_attn.q_proj.weight         | MISSING |
+model.layers.{0...47}.self_attn.v_proj.weight         | MISSING |
+model.layers.{0...47}.self_attn.o_proj.weight         | MISSING |
+model.layers.{0...47}.self_attn.q_norm.weight         | MISSING |
+model.layers.{0...47}.self_attn.k_norm.weight         | MISSING |
+model.layers.{0...47}.input_layernorm.weight          | MISSING |
+model.layers.{0...47}.post_attention_layernorm.weight | MISSING |
+model.layers.{0...47}.mlp.gate.weight                 | MISSING |
+model.embed_tokens.weight                             | MISSING |
+model.norm.weight                                     | MISSING |
+lm_head.weight                                        | MISSING |
+```
 
-### Issue 3: `_find_multi_shard_layers` Regex Limitation
+All non-expert weights (attention, layernorm, gate, embeddings, lm_head) are MISSING.
+Only MoE expert weights (`mlp.experts.*`) were loaded successfully.
 
-**Concern**: The regex `r"\.layers\.(\d+)\."` only matches keys following the
-standard transformer naming convention. Models with different naming patterns
-(e.g., `.blocks.N.` or `.decoder.layers.N.`) would not be detected.
+### Root Cause
 
-**Impact**: If boundary layers are not detected, the code falls back to original
-monolithic loading (safe but no memory improvement).
+Bug in `_apply_weight_conversions_to_state_dict` (`deepspeed.py:293-415`) when
+both `WeightConverter` and `WeightRenaming` entries coexist in `conversion_mapping`.
 
-**Mitigation**: Could be extended to support multiple patterns, but the current
-fallback behavior is safe.
+**Class hierarchy** (these are siblings, NOT parent-child):
+```
+WeightTransform (base)
+├── WeightRenaming  — simple key rename, has convert() method
+└── WeightConverter  — tensor fusion, has convert() method
+```
 
-### Issue 4: Missing Keys Intersection Logic
+**The bug** (deepspeed.py line 379):
+```python
+for renamed_key, mapping in conversion_mapping.items():
+    if not isinstance(mapping, WeightConverter):
+        continue  # ← SKIPS WeightRenaming!
+```
 
-**Concern**: The intersection approach for tracking missing keys assumes that a
-parameter appears in exactly one shard. If the same key appears in multiple shards
-(unlikely but possible with custom checkpoints), the intersection would incorrectly
-report it as not missing.
+**What happens**:
+1. Line 353: ALL keys are `state_dict.pop()`-ed from the dict
+2. Expert keys → added to `conversion_mapping` as `WeightConverter` entries
+3. Non-expert keys → added to `conversion_mapping` as auto-created `WeightRenaming`
+4. Line 379: converter loop processes only `WeightConverter`, **skips `WeightRenaming`**
+5. Line 401-409: tries to process remaining keys in `state_dict` — but it's **empty**
+6. Result: `new_state_dict` only has converted expert keys, non-expert keys are LOST
 
-**Mitigation**: Standard HuggingFace safetensors checkpoints never duplicate keys
-across shards, so this should not be an issue in practice.
+**Why the original (unpatched) loading works**:
+The original loading without our patch likely ran on a transformers version where
+`_apply_weight_conversions_to_state_dict` was not yet called inside
+`_load_state_dict_into_zero3_model`, or `weight_mapping` was None. The weight
+conversion framework is a relatively new addition to transformers.
 
-### Issue 5: Boundary Buffer Memory Size
+### Fix (v3)
 
-**Concern**: For models with many boundary layers, the boundary buffer could still
-be substantial. For Qwen3-30B-A3B with ~15 boundary layers at ~1.25GB each, the
-buffer would be ~19GB per process.
+Completely restructured the approach to avoid the buggy function:
 
-**Impact**: Still saves ~41GB per process vs the original ~60GB, but not as
-dramatic as the savings for non-MoE models (which would go from ~60GB to ~4GB).
+1. **Non-expert keys**: Load directly via `_load_state_dict_into_zero3_model` with
+   `weight_mapping=None` (checkpoint key names match model key names for attention,
+   layernorm, etc., so no conversion is needed)
 
-### Issue 6: Non-Layer Keys (Embeddings, LM Head)
+2. **Expert keys**: Call `_apply_weight_conversions_to_state_dict` ourselves with
+   ONLY expert keys. Since all keys match `WeightConverter` patterns, no
+   `WeightRenaming` entries are auto-created, and the bug is not triggered.
+   Then load the converted result with `weight_mapping=None`.
 
-**Concern**: Some model keys don't match the `.layers.N.` pattern (e.g.,
-`model.embed_tokens.weight`, `lm_head.weight`). In the current implementation,
-these are classified as "complete keys" (not boundary-layer keys) and loaded with
-the shard they appear in. This should be correct, but needs verification.
+3. **Boundary buffering**: Now only buffers expert keys (which need cross-shard
+   conversion). Non-expert keys from boundary layers are loaded directly per-shard,
+   further reducing the boundary buffer size.
 
-### Issue 7: `load_config` Attribute Access
+**Memory improvement**: The expert-only boundary buffer is significantly smaller
+than the v2 whole-layer boundary buffer. For Qwen3-30B-A3B with 14 boundary layers,
+the buffer now holds only expert weights (~1.1GB/layer × 14 ≈ 15GB) instead of
+all layer weights (~1.25GB/layer × 14 ≈ 17.5GB). The non-expert weights (~9 keys
+per layer, ~few MB) are loaded and freed immediately per shard.
 
-**Concern**: The code accesses `getattr(load_config, "weight_mapping", None)` to
-detect weight conversions. This attribute might not exist in all versions of
-transformers, or its structure might differ.
+---
 
-**Mitigation**: The `getattr` with default `None` handles the missing attribute
-case. If `weight_mapping` is None, no weight converters are detected, and the code
-takes the simpler path (no boundary buffering).
+## Other Issues in the Test Run (Not Related to Our Patch)
+
+### CUDA Version Mismatch
+
+```
+CUDAMismatchException: Installed CUDA version 13.0 does not match the version
+torch was compiled with 12.8
+```
+
+Environment issue. DeepSpeed's CPUAdamBuilder JIT compile detects CUDA mismatch.
+Fix: `DS_BUILD_CPU_ADAM=1 pip install deepspeed` or `DS_SKIP_CUDA_CHECK=1`.
+
+### DeepSpeedCPUAdam Destructor Error
+
+```
+AttributeError: 'DeepSpeedCPUAdam' object has no attribute 'ds_opt_adam'
+```
+
+Cascade from CUDA mismatch — constructor failed, destructor can't clean up.
+
+### PYTORCH_CUDA_ALLOC_CONF Deprecation Warning
+
+Rename environment variable from `PYTORCH_CUDA_ALLOC_CONF` to `PYTORCH_ALLOC_CONF`.
 
 ---
 
@@ -106,8 +149,9 @@ takes the simpler path (no boundary buffering).
 1. **Non-MoE model** (e.g., Qwen2.5-7B): Test shard-by-shard loading without
    weight conversions. Should work with the simple path.
 
-2. **MoE model** (Qwen3-30B-A3B): Test shard-by-shard loading with boundary-layer
-   buffering. Verify weight conversions succeed.
+2. **MoE model** (Qwen3-30B-A3B): Test shard-by-shard loading with expert key
+   separation and boundary-layer buffering. Verify weight conversions succeed and
+   NO MISSING keys in the LOAD REPORT.
 
 3. **Memory measurement**: Compare peak CPU memory (RSS) between original and
    patched loading. Use `psutil` or `/proc/self/status` VmRSS.

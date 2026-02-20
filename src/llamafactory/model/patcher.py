@@ -117,6 +117,40 @@ def _find_multi_shard_layers(checkpoint_files: list[str]) -> set[int]:
     return {layer for layer, shards in layer_to_shards.items() if len(shards) > 1}
 
 
+def _build_converter_pattern(weight_mapping) -> "re.Pattern | None":
+    r"""Build a compiled regex that matches checkpoint keys needing weight conversion.
+
+    Extracts source_patterns from WeightConverter entries in weight_mapping and converts
+    glob-like patterns (e.g. ``mlp.experts.*.gate_proj.weight``) into a single regex.
+    Returns None if no converter patterns exist.
+    """
+    import re
+
+    from transformers.core_model_loading import WeightConverter
+
+    raw_patterns: list[str] = []
+    for entry in weight_mapping:
+        if isinstance(entry, WeightConverter):
+            patterns = entry.source_patterns
+            if isinstance(patterns, str):
+                patterns = [patterns]
+            raw_patterns.extend(patterns)
+
+    if not raw_patterns:
+        return None
+
+    # Convert glob-like patterns to regex: "mlp.experts.*.gate_proj.weight" →
+    # r"\.mlp\.experts\.[^.]+\.gate_proj\.weight"
+    # Also handle $ anchored patterns like "mlp.experts.gate_up_proj$"
+    regex_parts = []
+    for pat in raw_patterns:
+        escaped = re.escape(pat).replace(r"\*", r"[^.]+").replace(r"\$", "$")
+        regex_parts.append(escaped)
+
+    combined = "|".join(f"(?:{p})" for p in regex_parts)
+    return re.compile(combined)
+
+
 def patch_zero3_model_loading() -> None:
     r"""Monkey-patch transformers to load model weights shard-by-shard for DeepSpeed ZeRO-3.
 
@@ -124,11 +158,9 @@ def patch_zero3_model_loading() -> None:
     before loading into the model. For large models (e.g. 30B+) with multiple processes, this
     causes a massive CPU memory spike (each process loads the full state_dict ~60GB).
 
-    This patch reduces peak CPU memory by:
-    - For models WITHOUT weight conversions: loads one shard at a time.
-    - For models WITH weight conversions (e.g. MoE expert fusion): separates each shard's keys
-      into "complete layer" keys (loaded immediately per-shard) and "boundary layer" keys
-      (accumulated across shards, then loaded once all source tensors are available).
+    This patch reduces peak CPU memory by loading one shard at a time. For models with weight
+    conversions (e.g. MoE expert fusion), it separates expert keys (which need cross-shard
+    buffering for conversion) from non-expert keys (loaded directly per shard).
     """
     global _zero3_loading_patched
     if _zero3_loading_patched:
@@ -136,10 +168,14 @@ def patch_zero3_model_loading() -> None:
 
     _zero3_loading_patched = True
 
+    import copy
     import re
 
     import transformers.modeling_utils as mu
-    from transformers.integrations.deepspeed import _load_state_dict_into_zero3_model
+    from transformers.integrations.deepspeed import (
+        _apply_weight_conversions_to_state_dict,
+        _load_state_dict_into_zero3_model,
+    )
     from transformers.modeling_utils import LoadStateDictInfo, load_state_dict
 
     _original_load = PreTrainedModel._load_pretrained_model
@@ -158,23 +194,27 @@ def patch_zero3_model_loading() -> None:
         if not (is_deepspeed_zero3_enabled() and not is_quantized and state_dict is None and checkpoint_files):
             return _original_load.__func__(cls, model, state_dict, checkpoint_files, load_config)
 
-        # Check if the model has weight conversions (e.g. MoE expert fusion)
+        # Detect weight converters (e.g. MoE expert fusion)
         weight_mapping = getattr(load_config, "weight_mapping", None)
         has_weight_converters = False
+        converter_re = None
         if weight_mapping:
             from transformers.core_model_loading import WeightConverter
 
             has_weight_converters = any(isinstance(v, WeightConverter) for v in weight_mapping)
+            if has_weight_converters:
+                converter_re = _build_converter_pattern(weight_mapping)
 
-        # If conversions exist, find layers that span multiple shards
+        # Find layers spanning multiple shards (for expert key buffering)
         multi_shard_layers: set[int] = set()
         if has_weight_converters:
             multi_shard_layers = _find_multi_shard_layers(checkpoint_files)
 
         if has_weight_converters and not multi_shard_layers:
-            # Has converters but can't determine boundaries → fall back to original
-            logger.info_rank0("DeepSpeed ZeRO-3: weight converters detected but no shard index found, "
-                              "falling back to default loading.")
+            logger.info_rank0(
+                "DeepSpeed ZeRO-3: weight converters detected but no shard index found, "
+                "falling back to default loading."
+            )
             return _original_load.__func__(cls, model, state_dict, checkpoint_files, load_config)
 
         logger.info_rank0(
@@ -183,9 +223,42 @@ def patch_zero3_model_loading() -> None:
             f"{f', {len(multi_shard_layers)} boundary layers buffered' if multi_shard_layers else ''})."
         )
 
+        # Create a load_config copy without weight_mapping so _load_state_dict_into_zero3_model
+        # won't call _apply_weight_conversions_to_state_dict internally (it has a bug where
+        # non-converter keys are dropped when converters are present).
+        # We handle conversions ourselves: convert expert keys explicitly, load non-expert keys directly.
+        no_wm_config = load_config
+        if has_weight_converters:
+            no_wm_config = copy.copy(load_config)
+            object.__setattr__(no_wm_config, "weight_mapping", None)
+
         all_error_msgs = []
         all_missing_keys = None
-        boundary_buffer: dict = {}  # accumulates keys from layers that span shard boundaries
+        # Buffer for expert keys from layers that span shard boundaries
+        expert_boundary_buffer: dict = {}
+
+        def _track_missing(missing_keys_from_call):
+            nonlocal all_missing_keys
+            if all_missing_keys is None:
+                all_missing_keys = missing_keys_from_call
+            else:
+                all_missing_keys = all_missing_keys.intersection(missing_keys_from_call)
+
+        def _load_direct(keys_dict):
+            """Load a state_dict directly into the model (no weight conversion)."""
+            if not keys_dict:
+                return
+            error_msgs, missing = _load_state_dict_into_zero3_model(model, keys_dict, no_wm_config)
+            all_error_msgs.extend(error_msgs)
+            _track_missing(missing)
+
+        def _convert_and_load(expert_keys_dict):
+            """Apply weight conversions to expert keys, then load the converted result."""
+            if not expert_keys_dict:
+                return
+            converted = _apply_weight_conversions_to_state_dict(model, expert_keys_dict, weight_mapping)
+            _load_direct(converted)
+            del converted
 
         for i, ckpt_file in enumerate(checkpoint_files):
             logger.info_rank0(f"Loading shard {i + 1}/{len(checkpoint_files)}")
@@ -193,58 +266,48 @@ def patch_zero3_model_loading() -> None:
                 ckpt_file, map_location="cpu", weights_only=load_config.weights_only
             )
 
-            if multi_shard_layers:
-                # Separate keys: complete-layer keys vs boundary-layer keys
-                complete_keys = {}
+            if not has_weight_converters:
+                # Simple path: no conversions, load entire shard directly
+                _load_direct(shard_state_dict)
+                del shard_state_dict
+            else:
+                # Separate expert keys (need conversion) from non-expert keys (load directly)
+                expert_keys = {}
+                non_expert_keys = {}
                 for key in list(shard_state_dict.keys()):
+                    if converter_re and converter_re.search(key):
+                        expert_keys[key] = shard_state_dict.pop(key)
+                    else:
+                        non_expert_keys[key] = shard_state_dict.pop(key)
+                del shard_state_dict
+
+                # Non-expert keys: load immediately (key names match model directly)
+                _load_direct(non_expert_keys)
+                del non_expert_keys
+
+                # Expert keys: split into boundary-layer (buffer) vs complete-layer (convert now)
+                complete_expert_keys = {}
+                for key in list(expert_keys.keys()):
                     match = re.search(r"\.layers\.(\d+)\.", key)
                     if match and int(match.group(1)) in multi_shard_layers:
-                        boundary_buffer[key] = shard_state_dict.pop(key)
+                        expert_boundary_buffer[key] = expert_keys.pop(key)
                     else:
-                        complete_keys[key] = shard_state_dict.pop(key)
+                        complete_expert_keys[key] = expert_keys.pop(key)
+                del expert_keys
 
-                del shard_state_dict
-
-                # Load complete-layer keys immediately (conversions within a shard are self-contained)
-                if complete_keys:
-                    error_msgs, shard_missing = _load_state_dict_into_zero3_model(
-                        model, complete_keys, load_config
-                    )
-                    all_error_msgs.extend(error_msgs)
-                    if all_missing_keys is None:
-                        all_missing_keys = shard_missing
-                    else:
-                        all_missing_keys = all_missing_keys.intersection(shard_missing)
-
-                del complete_keys
-            else:
-                # No conversions: load entire shard directly
-                error_msgs, shard_missing = _load_state_dict_into_zero3_model(
-                    model, shard_state_dict, load_config
-                )
-                all_error_msgs.extend(error_msgs)
-                if all_missing_keys is None:
-                    all_missing_keys = shard_missing
-                else:
-                    all_missing_keys = all_missing_keys.intersection(shard_missing)
-
-                del shard_state_dict
+                # Convert and load complete-layer expert keys immediately
+                _convert_and_load(complete_expert_keys)
+                del complete_expert_keys
 
             gc.collect()
 
-        # Load accumulated boundary keys (now complete across all shards)
-        if boundary_buffer:
-            logger.info_rank0(f"Loading {len(boundary_buffer)} buffered boundary-layer keys")
-            error_msgs, buf_missing = _load_state_dict_into_zero3_model(
-                model, boundary_buffer, load_config
+        # Convert and load buffered boundary-layer expert keys (now complete across all shards)
+        if expert_boundary_buffer:
+            logger.info_rank0(
+                f"Loading {len(expert_boundary_buffer)} buffered boundary-layer expert keys"
             )
-            all_error_msgs.extend(error_msgs)
-            if all_missing_keys is None:
-                all_missing_keys = buf_missing
-            else:
-                all_missing_keys = all_missing_keys.intersection(buf_missing)
-
-            del boundary_buffer
+            _convert_and_load(expert_boundary_buffer)
+            del expert_boundary_buffer
             gc.collect()
 
         return LoadStateDictInfo(

@@ -1,126 +1,105 @@
-# 5. Implementation Details
+# 5. Implementation Details (v3)
+
+## Design Principle
+
+Reduce peak CPU memory during ZeRO-3 model loading by loading checkpoint shards
+one at a time instead of merging all shards into a single state_dict.
+
+For MoE models with weight conversions, we separate keys into two categories:
+- **Non-expert keys** (attention, layernorm, embeddings, etc.): loaded directly
+  per shard — no conversion needed since checkpoint and model key names match
+- **Expert keys** (per-expert gate_proj, up_proj, down_proj): need conversion
+  (fusion/stacking), handled explicitly to avoid a bug in transformers
 
 ## Files Modified
 
 ### `src/llamafactory/model/patcher.py`
 
-Two new functions added:
+Three functions:
 
-#### `_find_multi_shard_layers(checkpoint_files)`
+#### `_find_multi_shard_layers(checkpoint_files) → set[int]`
 
-Reads `model.safetensors.index.json` to identify which model layers have keys
-spread across multiple checkpoint shards.
+Reads `model.safetensors.index.json` to find layers whose keys span multiple shards.
+Used to determine which expert keys need cross-shard buffering.
 
-```python
-def _find_multi_shard_layers(checkpoint_files: list[str]) -> set[int]:
-    """
-    Returns set of layer indices whose keys span multiple shards.
+#### `_build_converter_pattern(weight_mapping) → re.Pattern | None`
 
-    Algorithm:
-    1. Find model.safetensors.index.json in same directory as checkpoint files
-    2. Parse weight_map: {param_key: shard_filename}
-    3. For each key matching '.layers.N.', track which shard(s) layer N appears in
-    4. Return layers that appear in more than one shard
-    """
+Builds a compiled regex from `WeightConverter.source_patterns` to classify
+checkpoint keys as "expert" (needing conversion) vs "non-expert" (direct load).
+
+Example for qwen3_moe:
 ```
-
-**Note**: Uses regex `r"\.layers\.(\d+)\."` to extract layer indices. This works
-for all transformer models following the HuggingFace naming convention
-(`model.layers.N.xxx`). Models with different naming would not be detected, but
-would fall back to the original loading path.
+mlp\.experts\.[^.]+\.gate_proj\.weight|mlp\.experts\.[^.]+\.up_proj\.weight|mlp\.experts\.[^.]+\.down_proj\.weight
+```
 
 #### `patch_zero3_model_loading()`
 
-Monkey-patches `PreTrainedModel._load_pretrained_model` with a shard-by-shard
-implementation.
-
-**Key logic**:
+Monkey-patches `PreTrainedModel._load_pretrained_model`. Key logic:
 
 ```python
 def _load_pretrained_model_shard_by_shard(cls, model, state_dict, checkpoint_files, load_config):
     # 1. Guard: only activate for ZeRO-3 + non-quantized + no pre-loaded state_dict
-    if not (is_deepspeed_zero3_enabled() and not is_quantized and state_dict is None and checkpoint_files):
-        return _original_load(...)
+    # 2. Detect weight converters, build converter regex
+    # 3. Find boundary layers from safetensors index
+    # 4. Create no_wm_config = copy of load_config with weight_mapping=None
 
-    # 2. Detect weight converters (MoE models)
-    weight_mapping = getattr(load_config, "weight_mapping", None)
-    has_weight_converters = any(isinstance(v, WeightConverter) for v in weight_mapping)
-
-    # 3. Find boundary layers (if weight converters exist)
-    multi_shard_layers = _find_multi_shard_layers(checkpoint_files) if has_weight_converters else set()
-
-    # 4. For each shard:
     for ckpt_file in checkpoint_files:
-        shard_state_dict = load_state_dict(ckpt_file)
+        shard = load_state_dict(ckpt_file)
 
-        if multi_shard_layers:
-            # Separate keys: boundary-layer keys → buffer, others → load immediately
-            for key in shard_state_dict:
-                if key matches boundary layer:
-                    boundary_buffer[key] = shard_state_dict[key]
-                else:
-                    complete_keys[key] = shard_state_dict[key]
-
-            _load_state_dict_into_zero3_model(model, complete_keys, load_config)
+        if not has_weight_converters:
+            # Simple path: load entire shard directly
+            _load_state_dict_into_zero3_model(model, shard, no_wm_config)
         else:
-            # No conversions: load entire shard directly
-            _load_state_dict_into_zero3_model(model, shard_state_dict, load_config)
+            # Split shard into expert vs non-expert keys
+            expert_keys = {k: v matching converter_re}
+            non_expert_keys = {everything else}
+
+            # Non-expert: load immediately (no conversion needed)
+            _load_state_dict_into_zero3_model(model, non_expert_keys, no_wm_config)
+
+            # Expert: further split into boundary vs complete layers
+            for key in expert_keys:
+                if layer is boundary → expert_boundary_buffer[key] = ...
+                else → complete_expert_keys[key] = ...
+
+            # Convert complete-layer experts and load
+            converted = _apply_weight_conversions_to_state_dict(model, complete_expert_keys, weight_mapping)
+            _load_state_dict_into_zero3_model(model, converted, no_wm_config)
 
         gc.collect()
 
-    # 5. Load buffered boundary-layer keys (now complete)
-    if boundary_buffer:
-        _load_state_dict_into_zero3_model(model, boundary_buffer, load_config)
-
-    return LoadStateDictInfo(...)
+    # Convert and load buffered boundary-layer experts
+    if expert_boundary_buffer:
+        converted = _apply_weight_conversions_to_state_dict(model, expert_boundary_buffer, weight_mapping)
+        _load_state_dict_into_zero3_model(model, converted, no_wm_config)
 ```
 
 ### `src/llamafactory/model/loader.py`
 
-- Added import: `patch_zero3_model_loading` from `patcher.py`
-- Added call before `from_pretrained`:
-  ```python
-  # Patch model loading to be shard-by-shard for ZeRO-3 (reduces peak CPU memory)
-  patch_zero3_model_loading()
-  ```
-- The patch is guarded by `_zero3_loading_patched` flag, so it only runs once even
-  if `load_model` is called multiple times.
+- Import `patch_zero3_model_loading` from `patcher.py`
+- Call it before `from_pretrained` at line ~171
 
-## How `_load_state_dict_into_zero3_model` Handles Partial State Dicts
+## Why `weight_mapping=None`?
 
-The function at `transformers/integrations/deepspeed.py:418-496` already supports
-partial state dicts by design:
+`_load_state_dict_into_zero3_model` internally calls `_apply_weight_conversions_to_state_dict`
+when `load_config.weight_mapping` is non-empty. This function has a bug where
+`WeightRenaming` entries are dropped (see 06_debug_log.md Issue 2). By setting
+`weight_mapping=None`, we prevent that buggy call and handle conversions ourselves.
 
-```python
-# Line 470-471 comment:
-# "In sharded models, each shard has only part of the full state_dict"
-```
+## Why Calling `_apply_weight_conversions_to_state_dict` With Only Expert Keys Works
 
-It iterates over the model's named parameters, and for each parameter:
-1. Checks if the corresponding key exists in the state dict
-2. If yes: gathers the parameter, assigns the weight, re-partitions
-3. If no: adds to `missing_keys` set
+When the state_dict contains ONLY keys matching `WeightConverter` patterns (expert
+keys), the function creates ONLY `WeightConverter` entries in `conversion_mapping`.
+No `WeightRenaming` entries are auto-created, so the `isinstance` check bug is
+never triggered. All entries are processed correctly.
 
-This means we can call it multiple times with different subsets of keys, and the
-union of all calls will cover all parameters.
+## Memory Profile (Qwen3-30B-A3B, 4 GPUs)
 
-## Missing Keys Handling
-
-Since we call `_load_state_dict_into_zero3_model` multiple times, each call reports
-"missing keys" for parameters not in that particular partial dict. We track the
-intersection of missing keys across all calls — a key is truly missing only if it
-was missing in ALL calls.
-
-```python
-if all_missing_keys is None:
-    all_missing_keys = shard_missing
-else:
-    all_missing_keys = all_missing_keys.intersection(shard_missing)
-```
-
-## Current Status
-
-**Not yet fully tested.** The first implementation (naive shard-by-shard without
-boundary buffering) failed with weight conversion errors on Qwen3-30B-A3B. The
-second implementation (with boundary-layer buffering) was written but has known
-potential issues — see [06_debug_log.md](06_debug_log.md).
+| Phase | Original | v3 Patched |
+|-------|----------|------------|
+| Per-shard load | ~4GB | ~4GB |
+| Merged state_dict | ~60GB | 0 (not created) |
+| Expert boundary buffer | N/A | ~15GB |
+| **Peak per process** | **~60GB** | **~19GB** |
+| **Peak total (4 proc)** | **~240GB** | **~76GB** |
+| Steady-state (training) | ~30GB | ~30GB |
