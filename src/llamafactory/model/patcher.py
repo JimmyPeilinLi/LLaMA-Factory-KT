@@ -192,18 +192,6 @@ def patch_zero3_model_loading() -> None:
 
     _original_load = PreTrainedModel._load_pretrained_model
 
-    def _get_rss_gb() -> str:
-        """Get current process RSS in GB."""
-        try:
-            with open("/proc/self/status") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        kb = int(line.split()[1])
-                        return f"{kb / 1024 / 1024:.2f} GB"
-        except Exception:
-            pass
-        return "N/A"
-
     @classmethod
     def _load_pretrained_model_shard_by_shard(
         cls,
@@ -246,7 +234,6 @@ def patch_zero3_model_loading() -> None:
             f"Loading model weights for DeepSpeed ZeRO-3 "
             f"({len(checkpoint_files)} shards, low CPU memory mode"
             f"{f', {len(multi_shard_layers)} boundary layers with per-layer tracking' if multi_shard_layers else ''})."
-            f" [RSS before loading: {_get_rss_gb()}]"
         )
 
         # Create a load_config copy without weight_mapping so _load_state_dict_into_zero3_model

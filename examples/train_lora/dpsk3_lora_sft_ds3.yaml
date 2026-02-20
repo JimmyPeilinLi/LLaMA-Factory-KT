@@ -1,6 +1,5 @@
 ### model
 model_name_or_path: /mnt/data3/models/DeepSeek-V3
-trust_remote_code: true
 
 ### method
 stage: sft
