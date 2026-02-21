@@ -85,6 +85,52 @@ def patch_youtu_vl_model(model: "PreTrainedModel") -> None:
 _zero3_loading_patched = False
 
 
+def _get_mem_info() -> str:
+    """Get process RSS and system available memory."""
+    rss_gb = "N/A"
+    avail_gb = "N/A"
+    total_gb = "N/A"
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_gb = f"{int(line.split()[1]) / 1024 / 1024:.2f}"
+                    break
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_gb = f"{int(line.split()[1]) / 1024 / 1024:.2f}"
+                elif line.startswith("MemAvailable:"):
+                    avail_gb = f"{int(line.split()[1]) / 1024 / 1024:.2f}"
+    except Exception:
+        pass
+    return f"RSS={rss_gb}GB, Avail={avail_gb}GB, Total={total_gb}GB"
+
+
+def _tensor_bytes(state_dict: dict) -> int:
+    """Sum the byte size of all tensors in a state_dict."""
+    total = 0
+    for v in state_dict.values():
+        if hasattr(v, "nbytes"):
+            total += v.nbytes
+        elif hasattr(v, "nelement") and hasattr(v, "element_size"):
+            total += v.nelement() * v.element_size()
+    return total
+
+
+def _fmt_bytes(n: int) -> str:
+    """Format bytes as human-readable string."""
+    if n >= 1 << 30:
+        return f"{n / (1 << 30):.2f}GB"
+    elif n >= 1 << 20:
+        return f"{n / (1 << 20):.2f}MB"
+    else:
+        return f"{n / (1 << 10):.2f}KB"
+
+
 def _build_boundary_layer_info(checkpoint_files: list[str], converter_re: "re.Pattern") -> dict[int, int]:
     r"""For boundary layers (keys spanning multiple shards), count expected expert keys.
 
@@ -152,11 +198,13 @@ def _build_converter_pattern(weight_mapping) -> "re.Pattern | None":
         return None
 
     # Convert glob-like patterns to regex: "mlp.experts.*.gate_proj.weight" →
-    # r"\.mlp\.experts\.[^.]+\.gate_proj\.weight"
-    # Also handle $ anchored patterns like "mlp.experts.gate_up_proj$"
+    # r"\.mlp\.experts\.[^.]+\.gate_proj\.weight$"
+    # Anchor with $ to avoid matching suffixed keys like "weight_scale_inv"
     regex_parts = []
     for pat in raw_patterns:
         escaped = re.escape(pat).replace(r"\*", r"[^.]+").replace(r"\$", "$")
+        if not escaped.endswith("$"):
+            escaped += "$"
         regex_parts.append(escaped)
 
     combined = "|".join(f"(?:{p})" for p in regex_parts)
@@ -200,6 +248,9 @@ def patch_zero3_model_loading() -> None:
         checkpoint_files: list[str] | None,
         load_config: "mu.LoadStateDictConfig",
     ) -> "LoadStateDictInfo":
+        import os
+        import time
+
         is_quantized = load_config.is_quantized
 
         # Only intercept the ZeRO-3 branch that loads from checkpoint files
@@ -231,9 +282,14 @@ def patch_zero3_model_loading() -> None:
             return _original_load.__func__(cls, model, state_dict, checkpoint_files, load_config)
 
         logger.info_rank0(
-            f"Loading model weights for DeepSpeed ZeRO-3 "
-            f"({len(checkpoint_files)} shards, low CPU memory mode"
-            f"{f', {len(multi_shard_layers)} boundary layers with per-layer tracking' if multi_shard_layers else ''})."
+            f"[DIAG] ===== Shard-by-shard loading START ====="
+            f"\n[DIAG] Shards: {len(checkpoint_files)}, "
+            f"has_weight_converters: {has_weight_converters}, "
+            f"boundary_layers: {len(multi_shard_layers)}"
+            f"\n[DIAG] converter_re: {converter_re.pattern if converter_re else 'None'}"
+            f"\n[DIAG] boundary_layer_info (layer_id: expected_expert_keys): "
+            f"{dict(sorted(boundary_layer_info.items())) if boundary_layer_info else '{}'}"
+            f"\n[DIAG] Memory BEFORE loading: {_get_mem_info()}"
         )
 
         # Create a load_config copy without weight_mapping so _load_state_dict_into_zero3_model
@@ -250,6 +306,7 @@ def patch_zero3_model_loading() -> None:
         # Per-layer buffer for expert keys from boundary layers: layer_id → {key: tensor}
         per_layer_buffer: dict[int, dict] = {}
         completed_boundary_layers = 0
+        total_buffer_bytes = 0  # track buffer memory
 
         def _track_missing(missing_keys_from_call):
             nonlocal all_missing_keys
@@ -258,31 +315,68 @@ def patch_zero3_model_loading() -> None:
             else:
                 all_missing_keys = all_missing_keys.intersection(missing_keys_from_call)
 
-        def _load_direct(keys_dict):
+        def _load_direct(keys_dict, label=""):
             """Load a state_dict directly into the model (no weight conversion)."""
             if not keys_dict:
                 return
+            n_keys = len(keys_dict)
+            sz = _tensor_bytes(keys_dict)
+            logger.info_rank0(
+                f"[DIAG]   _load_direct({label}): {n_keys} keys, {_fmt_bytes(sz)} | {_get_mem_info()}"
+            )
+            t0 = time.monotonic()
             error_msgs, missing = _load_state_dict_into_zero3_model(model, keys_dict, no_wm_config)
+            dt = time.monotonic() - t0
             all_error_msgs.extend(error_msgs)
             _track_missing(missing)
+            logger.info_rank0(
+                f"[DIAG]   _load_direct({label}) done in {dt:.1f}s, "
+                f"errors: {len(error_msgs)} | {_get_mem_info()}"
+            )
 
-        def _convert_and_load(expert_keys_dict):
+        def _convert_and_load(expert_keys_dict, label=""):
             """Apply weight conversions to expert keys, then load the converted result."""
             if not expert_keys_dict:
                 return
+            n_keys = len(expert_keys_dict)
+            sz = _tensor_bytes(expert_keys_dict)
+            logger.info_rank0(
+                f"[DIAG]   _convert_and_load({label}): {n_keys} expert keys, "
+                f"{_fmt_bytes(sz)} | {_get_mem_info()}"
+            )
+            t0 = time.monotonic()
             converted = _apply_weight_conversions_to_state_dict(model, expert_keys_dict, weight_mapping)
-            _load_direct(converted)
+            conv_sz = _tensor_bytes(converted)
+            logger.info_rank0(
+                f"[DIAG]   conversion done: {len(converted)} converted keys, "
+                f"{_fmt_bytes(conv_sz)} | {_get_mem_info()}"
+            )
+            _load_direct(converted, label=f"converted-{label}")
             del converted
 
+        loading_start = time.monotonic()
+
         for i, ckpt_file in enumerate(checkpoint_files):
-            logger.info_rank0(f"Loading shard {i + 1}/{len(checkpoint_files)}")
+            shard_name = os.path.basename(ckpt_file)
+            shard_file_size = os.path.getsize(ckpt_file) if os.path.exists(ckpt_file) else 0
+            logger.info_rank0(
+                f"[DIAG] --- Shard {i + 1}/{len(checkpoint_files)}: {shard_name} "
+                f"(file: {_fmt_bytes(shard_file_size)}) | {_get_mem_info()}"
+            )
+            t_shard = time.monotonic()
             shard_state_dict = load_state_dict(
                 ckpt_file, map_location="cpu", weights_only=load_config.weights_only
+            )
+            shard_keys = len(shard_state_dict)
+            shard_bytes = _tensor_bytes(shard_state_dict)
+            logger.info_rank0(
+                f"[DIAG]   Shard loaded from disk: {shard_keys} keys, {_fmt_bytes(shard_bytes)} "
+                f"in {time.monotonic() - t_shard:.1f}s | {_get_mem_info()}"
             )
 
             if not has_weight_converters:
                 # Simple path: no conversions, load entire shard directly
-                _load_direct(shard_state_dict)
+                _load_direct(shard_state_dict, label=f"shard-{i+1}")
                 del shard_state_dict
             else:
                 # Separate expert keys (need conversion) from non-expert keys (load directly)
@@ -295,25 +389,47 @@ def patch_zero3_model_loading() -> None:
                         non_expert_keys[key] = shard_state_dict.pop(key)
                 del shard_state_dict
 
+                expert_bytes = _tensor_bytes(expert_keys)
+                non_expert_bytes = _tensor_bytes(non_expert_keys)
+                logger.info_rank0(
+                    f"[DIAG]   Split: {len(non_expert_keys)} non-expert keys ({_fmt_bytes(non_expert_bytes)}), "
+                    f"{len(expert_keys)} expert keys ({_fmt_bytes(expert_bytes)})"
+                )
+
                 # Non-expert keys: load immediately (key names match model directly)
-                _load_direct(non_expert_keys)
+                _load_direct(non_expert_keys, label=f"shard-{i+1}-non-expert")
                 del non_expert_keys
 
                 # Expert keys: split into boundary-layer (per-layer buffer) vs complete-layer (convert now)
                 complete_expert_keys = {}
+                buffered_this_shard = 0
+                buffered_this_shard_bytes = 0
                 for key in list(expert_keys.keys()):
                     match = re.search(r"\.layers\.(\d+)\.", key)
                     if match and int(match.group(1)) in multi_shard_layers:
                         layer_id = int(match.group(1))
                         if layer_id not in per_layer_buffer:
                             per_layer_buffer[layer_id] = {}
-                        per_layer_buffer[layer_id][key] = expert_keys.pop(key)
+                        tensor = expert_keys.pop(key)
+                        buf_bytes = tensor.nbytes if hasattr(tensor, "nbytes") else tensor.nelement() * tensor.element_size()
+                        total_buffer_bytes += buf_bytes
+                        buffered_this_shard += 1
+                        buffered_this_shard_bytes += buf_bytes
+                        per_layer_buffer[layer_id][key] = tensor
                     else:
                         complete_expert_keys[key] = expert_keys.pop(key)
                 del expert_keys
 
+                if buffered_this_shard > 0:
+                    logger.info_rank0(
+                        f"[DIAG]   Buffered {buffered_this_shard} boundary expert keys "
+                        f"({_fmt_bytes(buffered_this_shard_bytes)}) across {len(per_layer_buffer)} layers, "
+                        f"total buffer: {_fmt_bytes(total_buffer_bytes)}"
+                    )
+
                 # Convert and load complete-layer expert keys immediately
-                _convert_and_load(complete_expert_keys)
+                if complete_expert_keys:
+                    _convert_and_load(complete_expert_keys, label=f"shard-{i+1}-complete")
                 del complete_expert_keys
 
                 # Check for completed boundary layers and load them immediately
@@ -323,32 +439,54 @@ def patch_zero3_model_loading() -> None:
                 ]
                 for layer_id in sorted(newly_completed):
                     layer_keys = per_layer_buffer.pop(layer_id)
-                    _convert_and_load(layer_keys)
+                    freed_bytes = _tensor_bytes(layer_keys)
+                    total_buffer_bytes -= freed_bytes
+                    logger.info_rank0(
+                        f"[DIAG]   Boundary layer {layer_id} complete: "
+                        f"{len(layer_keys)}/{boundary_layer_info[layer_id]} keys, "
+                        f"freeing {_fmt_bytes(freed_bytes)} from buffer"
+                    )
+                    _convert_and_load(layer_keys, label=f"boundary-L{layer_id}")
                     del layer_keys
                     completed_boundary_layers += 1
                 if newly_completed:
                     logger.info_rank0(
-                        f"  Completed {len(newly_completed)} boundary layer(s) "
-                        f"({completed_boundary_layers}/{len(boundary_layer_info)} total, "
-                        f"buffer: {len(per_layer_buffer)} layers)"
+                        f"[DIAG]   Completed {len(newly_completed)} boundary layer(s) "
+                        f"({completed_boundary_layers}/{len(boundary_layer_info)} total), "
+                        f"remaining buffer: {len(per_layer_buffer)} layers, {_fmt_bytes(total_buffer_bytes)}"
                     )
 
             gc.collect()
+            logger.info_rank0(
+                f"[DIAG]   Shard {i + 1} done (gc.collect), elapsed: {time.monotonic() - t_shard:.1f}s | "
+                f"{_get_mem_info()}"
+            )
 
         # Handle any remaining incomplete boundary layers (shouldn't happen if index is accurate)
         if per_layer_buffer:
             remaining_keys = sum(len(keys) for keys in per_layer_buffer.values())
             logger.warning_rank0(
-                f"Loading {remaining_keys} expert keys from {len(per_layer_buffer)} "
-                f"incomplete boundary layers (may indicate index mismatch)"
+                f"[DIAG] Loading {remaining_keys} expert keys from {len(per_layer_buffer)} "
+                f"incomplete boundary layers ({_fmt_bytes(total_buffer_bytes)}) "
+                f"(may indicate index mismatch)"
             )
             remaining = {}
             for layer_keys in per_layer_buffer.values():
                 remaining.update(layer_keys)
             per_layer_buffer.clear()
-            _convert_and_load(remaining)
+            total_buffer_bytes = 0
+            _convert_and_load(remaining, label="remaining-boundary")
             del remaining
             gc.collect()
+
+        total_time = time.monotonic() - loading_start
+        logger.info_rank0(
+            f"[DIAG] ===== Shard-by-shard loading DONE ====="
+            f"\n[DIAG] Total time: {total_time:.1f}s, "
+            f"boundary layers completed: {completed_boundary_layers}/{len(boundary_layer_info)}, "
+            f"errors: {len(all_error_msgs)}"
+            f"\n[DIAG] Memory AFTER loading: {_get_mem_info()}"
+        )
 
         return LoadStateDictInfo(
             missing_keys=all_missing_keys or set(),

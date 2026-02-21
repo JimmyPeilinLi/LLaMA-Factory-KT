@@ -38,6 +38,7 @@ from .model_utils.mod import convert_pretrained_model_to_mod, load_mod_pretraine
 from .model_utils.unsloth import load_unsloth_pretrained_model
 from .model_utils.valuehead import load_valuehead_params
 from .patcher import (
+    _get_mem_info,
     patch_config,
     patch_model,
     patch_processor,
@@ -168,6 +169,7 @@ def load_model(
         init_kwargs["torch_dtype"] = "auto"
 
         # Patch model loading to be shard-by-shard for ZeRO-3 (reduces peak CPU memory)
+        logger.info_rank0(f"[DIAG] Before patch_zero3_model_loading: {_get_mem_info()}")
         patch_zero3_model_loading()
 
         if model_args.mixture_of_depths == "load":
@@ -185,7 +187,9 @@ def load_model(
             if model_args.train_from_scratch:
                 model = load_class.from_config(config, trust_remote_code=model_args.trust_remote_code)
             else:
+                logger.info_rank0(f"[DIAG] Before from_pretrained: {_get_mem_info()}")
                 model = load_class.from_pretrained(**init_kwargs)
+                logger.info_rank0(f"[DIAG] After from_pretrained: {_get_mem_info()}")
                 if getattr(model.config, "model_type", None) in ["qwen2_5_omni", "qwen3_omni_moe"]:
                     model = getattr(model, "thinker")
 
@@ -193,10 +197,14 @@ def load_model(
             model = convert_pretrained_model_to_mod(model, config, model_args)
 
     if not lazy_load:
+        logger.info_rank0(f"[DIAG] Before patch_model (add_z3_leaf etc): {_get_mem_info()}")
         patch_model(model, tokenizer, model_args, is_trainable, add_valuehead)
+        logger.info_rank0(f"[DIAG] After patch_model: {_get_mem_info()}")
         register_autoclass(config, model, tokenizer)
 
+    logger.info_rank0(f"[DIAG] Before init_adapter (LoRA init): {_get_mem_info()}")
     model = init_adapter(config, model, model_args, finetuning_args, is_trainable)
+    logger.info_rank0(f"[DIAG] After init_adapter: {_get_mem_info()}")
 
     if add_valuehead:
         model = AutoModelForCausalLMWithValueHead.from_pretrained(model)
