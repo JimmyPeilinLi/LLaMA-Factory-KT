@@ -28,7 +28,7 @@ matplotlib.rcParams.update({
 
 # ---------- data sources ----------
 sources = {
-    "ZeRO-LoRA": "/mnt/data/lpl/kernel_new_test_adapter/zero_lora_qwen3_235b_livebench_math/trainer_log.jsonl",
+    "ZeRO-LoRA (offload paradigm)": "/mnt/data/lpl/kernel_new_test_adapter/zero_lora_qwen3_235b_livebench_math/trainer_log.jsonl",
     "KT-FT (new paradigm)": "/mnt/data/hxx/saves/qwen3-235-lora-math/trainer_log.jsonl",
     "KT-FT+KLoRA (Ours co-design)": "/mnt/data/hxx/saves/qwen3-235-lora-math-le/trainer_log.jsonl",
 }
@@ -110,7 +110,7 @@ for idx, (name, d) in enumerate(data.items()):
 # --- Annotation: arrow between ZeRO and KT-FT at same loss ---
 TARGET_LOSS = 0.49
 
-zero_d = data["ZeRO-LoRA"]
+zero_d = data["ZeRO-LoRA (offload paradigm)"]
 ktft_d = data["KT-FT (new paradigm)"]
 
 def make_monotone_decreasing(loss, time, step):
@@ -148,29 +148,7 @@ print(f"  Speedup: {speedup:.1f}x,  label samples: {avg_samples}")
 ax2.plot(zero_time_pt, TARGET_LOSS, "o", color="#B71C1C", markersize=4, zorder=5)
 ax2.plot(ktft_time_pt, TARGET_LOSS, "o", color="#B71C1C", markersize=4, zorder=5)
 
-# Draw arrow from ZeRO point to KT-FT point
-ax2.annotate(
-    "",
-    xy=(ktft_time_pt, TARGET_LOSS),
-    xytext=(zero_time_pt, TARGET_LOSS),
-    arrowprops=dict(
-        arrowstyle="->,head_width=0.3,head_length=0.15",
-        color="#B71C1C",
-        lw=2.0,
-        connectionstyle="arc3,rad=0",
-    ),
-    zorder=6,
-)
-
-# Label above the arrow
-mid_time = (zero_time_pt + ktft_time_pt) / 2
-ax2.text(
-    mid_time, TARGET_LOSS + 0.12,
-    f"{avg_samples} samples, same LoRA, {speedup:.1f}x faster",
-    ha="center", va="bottom",
-    fontsize=8, fontstyle="italic", color="#B71C1C",
-    fontweight="bold",
-)
+print(f"  Arrow label: {avg_samples} samples, same LoRA, {speedup:.1f}x faster")
 
 ax2.set_xlabel("Wall-Clock Time (min)")
 ax2.set_ylabel("Loss")
