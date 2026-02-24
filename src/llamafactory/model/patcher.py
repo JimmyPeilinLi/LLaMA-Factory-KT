@@ -83,6 +83,7 @@ def patch_youtu_vl_model(model: "PreTrainedModel") -> None:
 
 
 _zero3_loading_patched = False
+_zero3_init_patched = False
 
 
 def _get_mem_info() -> str:
@@ -209,6 +210,210 @@ def _build_converter_pattern(weight_mapping) -> "re.Pattern | None":
 
     combined = "|".join(f"(?:{p})" for p in regex_parts)
     return re.compile(combined)
+
+
+def patch_deepspeed_zero_init_memory() -> None:
+    r"""Monkey-patch DeepSpeed zero.Init to reduce CPU memory during model creation.
+
+    During ``deepspeed.zero.Init()``, each parameter is created at full size, then
+    partitioned across ranks with the partition stored on CPU. When pin_memory=True
+    (default for CPU offload), the partition goes through a double allocation:
+
+      1. ``torch.empty(size, device='cpu')``  → regular malloc (~3.75GB for a 15GB param / 4 ranks)
+      2. ``pin_memory()``                     → cudaHostAlloc (~3.75GB) + copy + free(original)
+
+    The ``free()`` in step 2 often doesn't return memory to the OS (glibc arena fragmentation),
+    causing ~2x the expected memory usage. For DeepSeek-V3 (671B, 256 experts), this means
+    ~1.8TB instead of ~1TB, causing OOM on a 2TB machine at ~72% completion.
+
+    This patch:
+      1. Replaces the two-step malloc→pin with direct ``torch.empty(pin_memory=True)``
+      2. Adds ``gc.collect()`` + ``malloc_trim(0)`` after each large parameter partition
+      3. Adds diagnostic logging for RSS tracking during model creation
+    """
+    global _zero3_init_patched
+    if _zero3_init_patched:
+        return
+
+    if not is_deepspeed_zero3_enabled():
+        return
+
+    _zero3_init_patched = True
+
+    import ctypes
+    import time
+
+    from deepspeed.runtime.zero.partition_parameters import Init
+
+    # Get libc for malloc_trim
+    try:
+        _libc = ctypes.CDLL("libc.so.6")
+        _has_malloc_trim = hasattr(_libc, "malloc_trim")
+    except Exception:
+        _libc = None
+        _has_malloc_trim = False
+
+    # Threshold: only do aggressive cleanup for params larger than 100MB
+    _CLEANUP_THRESHOLD_BYTES = 100 * 1024 * 1024
+
+    _original_post_init = Init._post_init_method
+    _param_count = [0]
+    _last_log_time = [0.0]
+
+    def _patched_post_init_method(self, module):
+        r"""Wraps _post_init_method to add memory cleanup and diagnostics."""
+        # Calculate total param bytes in this module (before partitioning)
+        total_bytes = 0
+        for _name, p in module.named_parameters(recurse=False):
+            total_bytes += p.numel() * p.element_size()
+
+        # Call original (creates, broadcasts, partitions params)
+        _original_post_init(self, module)
+
+        # Count params for progress tracking
+        for _name, _p in module.named_parameters(recurse=False):
+            _param_count[0] += 1
+
+        # Aggressive cleanup after large modules (e.g. expert modules with 15GB+ params)
+        if total_bytes > _CLEANUP_THRESHOLD_BYTES:
+            gc.collect()
+            if _has_malloc_trim:
+                _libc.malloc_trim(0)
+
+            # Log progress periodically (every 10 seconds)
+            now = time.monotonic()
+            if now - _last_log_time[0] > 10.0:
+                _last_log_time[0] = now
+                logger.info_rank0(
+                    f"[DIAG] zero.Init progress: {_param_count[0]} params done, "
+                    f"module={module.__class__.__name__}, "
+                    f"module_params={_fmt_bytes(total_bytes)} | {_get_mem_info()}"
+                )
+
+    Init._post_init_method = _patched_post_init_method
+
+    # --- Patch _partition_param to avoid double allocation ---
+    _original_partition_param = Init._partition_param
+
+    def _patched_partition_param(self, param, buffer=None, has_been_updated=False, free_data=True):
+        r"""Wraps _partition_param to use direct pinned allocation.
+
+        The original code does:
+          1. torch.empty(size, device='cpu')        → malloc
+          2. get_accelerator().pin_memory(tensor)    → cudaHostAlloc + copy + free(malloc'd)
+
+        The free() in step 2 may not return memory to OS. We fix this by:
+          - Allocating directly as pinned via torch.empty(pin_memory=True) when possible
+          - Adding gc.collect + malloc_trim after freeing the full param
+        """
+        from deepspeed.runtime.zero.config import OffloadDeviceEnum
+        from deepspeed.runtime.zero.partition_parameters import (
+            PartitionedParamStatus,
+            ZeroParamStatus,
+            free_param,
+            get_accelerator,
+            print_rank_0,
+            see_memory_usage,
+        )
+
+        assert param.ds_status is not ZeroParamStatus.INFLIGHT, f" {param} Cannot partition a param in flight"
+
+        if param.ds_status is ZeroParamStatus.AVAILABLE:
+            if param.ds_tensor is not None and not has_been_updated:
+                see_memory_usage(f'Before partitioning param {param.ds_id} {param.shape}', force=False)
+                if free_data:
+                    free_param(param)
+                see_memory_usage(f'After partitioning param {param.ds_id} {param.shape}', force=False)
+
+                if param.ds_tensor.final_location == OffloadDeviceEnum.nvme:
+                    print_rank_0(f"Param {param.ds_id} partition released since it exists in nvme", force=False)
+                    param.nvme_swapper.remove_partition_and_release_buffers([param])
+                return
+
+            tensor_size = self._aligned_size(param)
+            partition_size = tensor_size // self.num_partitions
+
+            if param.ds_tensor is None:
+                final_location = None
+                if self.remote_device == OffloadDeviceEnum.nvme and self.param_swapper.swappable_tensor(
+                        numel=partition_size):
+                    # NVMe path: unchanged
+                    final_location = OffloadDeviceEnum.nvme
+                    buffer = self.param_swapper.get_buffer(param, partition_size)
+                    partitioned_tensor = torch.empty(0, dtype=param.dtype, device=buffer.device)
+                    partitioned_tensor.data = buffer.data
+                    print_rank_0(f"ID {param.ds_id} Initializing partition for the first time for nvme offload.")
+                else:
+                    if param.ds_persist:
+                        device = self.local_device
+                    elif self.remote_device == OffloadDeviceEnum.nvme:
+                        device = OffloadDeviceEnum.cpu
+                    else:
+                        device = self.remote_device
+
+                    # KEY FIX: allocate directly as pinned to avoid double allocation
+                    if device == OffloadDeviceEnum.cpu and self.pin_memory:
+                        partitioned_tensor = torch.empty(partition_size, dtype=param.dtype,
+                                                         device='cpu', pin_memory=True)
+                    else:
+                        partitioned_tensor = torch.empty(partition_size, dtype=param.dtype, device=device)
+
+                    # quantize the tensor if it's not trainable
+                    if not param.requires_grad and self.quantized_nontrainable_weights:
+                        partitioned_tensor, partitioned_tensor.ds_quant_scale = self.quantizer_module.quantize(
+                            partitioned_tensor)
+                        # If quantized AND needs pinning, pin the quantized tensor (fallback to original path)
+                        if device == OffloadDeviceEnum.cpu and self.pin_memory and not partitioned_tensor.is_pinned():
+                            partitioned_tensor = get_accelerator().pin_memory(partitioned_tensor)
+
+                partitioned_tensor.requires_grad = False
+                param.ds_tensor = partitioned_tensor
+                param.ds_tensor.ds_numel = partition_size
+                param.ds_tensor.status = PartitionedParamStatus.AVAILABLE
+                param.ds_tensor.final_location = final_location
+                param.ds_numel_aligned = tensor_size
+
+            start = partition_size * self.get_partition_rank()
+            end = start + partition_size
+
+            one_dim_param = param.contiguous().view(-1)
+
+            if start < param.ds_numel and end <= param.ds_numel:
+                src_tensor = one_dim_param.narrow(0, start, partition_size)
+                with torch.no_grad():
+                    param.ds_tensor.copy_(src_tensor)
+            else:
+                if start < param.ds_numel:
+                    elems_to_copy = param.ds_numel - start
+                    with torch.no_grad():
+                        param.ds_tensor.narrow(0, 0, elems_to_copy).copy_(
+                            one_dim_param.narrow(0, start, elems_to_copy))
+
+            see_memory_usage(f'Before partitioning param {param.ds_id} {param.shape}', force=False)
+            free_param(param)
+            see_memory_usage(f'After partitioning param {param.ds_id} {param.shape}', force=False)
+
+            # Force cleanup of any retained intermediate memory
+            param_bytes = param.ds_numel * param.element_size()
+            if param_bytes > _CLEANUP_THRESHOLD_BYTES:
+                del one_dim_param
+                gc.collect()
+                if _has_malloc_trim:
+                    _libc.malloc_trim(0)
+
+            if param.ds_tensor.final_location == OffloadDeviceEnum.nvme:
+                self.param_swapper.swap_out_and_release([param])
+                print_rank_0(f"ID {param.ds_id} Offloaded to nvme offload and buffers released.")
+
+            print_rank_0(
+                f"ID {param.ds_id} partitioned type {param.dtype} dev {param.device} shape {param.shape}")
+
+    Init._partition_param = _patched_partition_param
+
+    logger.info_rank0(
+        "Patched DeepSpeed zero.Init for reduced CPU memory "
+        "(direct pinned allocation + gc/malloc_trim after large params)."
+    )
 
 
 def patch_zero3_model_loading() -> None:

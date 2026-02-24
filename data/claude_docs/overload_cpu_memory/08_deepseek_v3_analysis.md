@@ -1,228 +1,286 @@
 # 08 DeepSeek-V3 OOM 分析
 
-## 概述
+## 当前状态
 
-DeepSeek-V3 (671B) 在 2TB 内存、4 GPU 的环境下使用 DeepSpeed ZeRO-3 offload + LoRA 进行训练时，
-在模型**创建阶段**（`deepspeed.zero.Init()`）就发生 OOM，根本没有执行到 shard-by-shard 权重加载阶段。
+**已实施修复，尚未测试。** 修复基于"双重分配"假设（见下文不确定性说明）。
+如果修复无效，本文档包含诊断方法和备选方案的具体实施指引。
 
-这是一个与 Qwen3 系列完全不同的问题：
-- **Qwen3 的问题**：shard-by-shard 权重加载阶段的内存峰值（Phase 1），已通过 v4 方案解决
-- **DeepSeek-V3 的问题**：模型参数 materialization 阶段（Phase 0）的内存不足，v4 方案无法覆盖
+## 问题描述
 
-## 关键发现
+DeepSeek-V3 (671B) 在 2TB 内存、4 GPU 的环境下使用 DeepSpeed ZeRO-3 offload + LoRA 训练时，
+在模型**创建阶段**（`deepspeed.zero.Init()`）就 OOM，**从未执行到 shard-by-shard 权重加载**。
 
-### 1. OOM 发生在 Phase 0（模型创建），不是 Phase 1（权重加载）
+与 Qwen3 系列问题完全不同：
 
-从 `zero_dpsk3.log` 可以看到，只有 2 条来自 `loader.py` 的 DIAG 日志：
+| | Qwen3 系列 | DeepSeek-V3 |
+|---|---|---|
+| OOM 阶段 | Phase 1: 权重加载 | **Phase 0: 模型创建 (`deepspeed.zero.Init()`)** |
+| v4 shard-by-shard 方案 | 已解决 | **不覆盖**（Phase 0 在 Phase 1 之前发生） |
+| 日志标志 | 有 shard-by-shard DIAG 日志 | 只有 `Before from_pretrained`，没有 `After` |
+
+## 实验数据
+
+### 实验 1：无任何优化
+- 停在 **632/967 参数**（layer 40, `experts.down_proj`）
+- 系统内存 576GB → **1,856GB** → OOM killed (exitcode -15)
+- 日志：`/mnt/data/lpl/ls/zero_dpsk3.log`（旧版）
+
+### 实验 2：`MALLOC_TRIM_THRESHOLD_=0`
+- 停在 **697/967 参数**（layer 44, `experts.gate_up_proj`）
+- 改善约 10%（多活了 4 个 MoE 层），但仍 OOM
+- 日志：`/mnt/data/lpl/ls/zero_dpsk3.log`（当前版本）
+
+### 关键推导
+
 ```
-[DIAG] Before patch_zero3_model_loading: RSS=...
-[DIAG] Before from_pretrained: RSS=...
-```
-**没有** `After from_pretrained` 日志，说明 `from_pretrained()` 从未完成。
+全模型 BF16 = 1,376 GB
+ZeRO-3 分区后（4 rank 合计）= 1,376 GB（每 rank 344 GB）
+理论峰值 = 1,376 GB + 系统开销 ~100GB = ~1,476 GB → 应该放得下 2TB
 
-进一步确认，DeepSpeed zero.Init 的参数 materialization 进度停止在 65%：
-```
-[DeepSpeed] partition 632 / 967 parameters
-model.layers.40.mlp.experts.down_proj  (最后一个被 materialize 的参数)
+但实际 OOM 在 ~1,856 GB（才 72% 参数）
+外推全模型 = 1,856 / 0.72 ≈ 2,578 GB → 比理论值多 ~1,100 GB（1.87x 倍率）
 ```
 
-### 2. 内存增长轨迹
+这 ~1.87x 倍率说明有大量内存没有被正确归还给 OS。
 
-从 `mem_log_new_dpsk3.csv` 系统级内存监控数据：
+## 根因假设（尚未完全验证）
 
-| 时间 | mem_used (GB) | mem_avail (GB) | 阶段 |
-|------|-------------|---------------|------|
-| 15:49:24 | 576 | 1439 | 基线（训练启动前） |
-| 15:50:00 | 750 | 1265 | zero.Init 开始 |
-| 15:53:00 | 1198 | 817 | ~40% 参数完成 |
-| 15:55:00 | 1461 | 588 | ~55% 参数完成 |
-| 15:57:00 | 1776 | 281 | ~63% 参数完成 |
-| 15:57:47 | 1856 | 208 | 65% 参数完成，OOM killed |
-| 15:58:07 | 1447 | 617 | 进程被杀，内存回收 |
+### 假设：`_partition_param` 双重分配
 
-**内存增长速率**：约 2.46 GB/s 平均，~80-100 GB/30秒
+在 `deepspeed/runtime/zero/partition_parameters.py` 的 `_partition_param()` (line 1613-1620)：
 
-### 3. 为什么 Phase 0 占用这么多内存？
+```python
+# 步骤 1: glibc malloc
+partitioned_tensor = torch.empty(partition_size, dtype=param.dtype, device='cpu')   # 3.75GB
 
-#### 3.1 DeepSeek-V3 模型参数规模
+# 步骤 2: cudaHostAlloc + copy + free(步骤1)
+if device == OffloadDeviceEnum.cpu and self.pin_memory:
+    partitioned_tensor = get_accelerator().pin_memory(partitioned_tensor)            # 另一个 3.75GB
+```
+
+如果步骤 2 的 `free()` 不归还内存，每个参数分区就会保留 2 倍的内存。
+
+**支持这个假设的证据：**
+- MALLOC_TRIM_THRESHOLD_=0 有 ~10% 改善（说明确实有 glibc 内存保留问题）
+- pin_memory=true 是默认配置，确实会触发双重分配
+
+**不完全匹配的地方：**
+- 如果是纯粹的双重分配问题，MALLOC_TRIM_THRESHOLD_=0 应该改善更多（理论上接近 50%），但实际只改善了 10%
+- 可能还有其他内存开销来源（NCCL 缓冲区、PyTorch 内部状态、CUDA context 等）
+
+**结论：双重分配是问题的一部分，但可能不是唯一原因。** 实施的修复仍然值得测试，因为消除双重分配本身是正确的优化。
+
+### 每个参数的完整 flow
+
+```
+1. torch.empty(full_size, device='cuda:X')    → GPU 创建全尺寸参数 (15GB for gate_up_proj)
+2. dist.broadcast(param.data, 0, dp_group)    → GPU 间广播（NCCL, in-place）
+3. _partition_param:
+   a. torch.empty(partition_size, device='cpu') → CPU malloc 3.75GB        ← 可能泄漏
+   b. pin_memory()                              → cudaHostAlloc 3.75GB + copy + free(a)
+   c. copy_(GPU slice → CPU pinned)             → 复制分区数据
+   d. free_param()                              → 释放 GPU 全尺寸张量
+4. GPU 内存循环使用，CPU pinned 内存累积
+```
+
+代码位置：
+- DeepSpeed Init: `/mnt/data/lpl/anaconda3/envs/llama/lib/python3.11/site-packages/deepspeed/runtime/zero/partition_parameters.py`
+- `_partition_param`: line 1555
+- `free_param`: line 282
+- `_post_init_method`: line 1088
+- `_zero_init_param`: line 1056
+
+## 已实施的修复
+
+### 代码变更
+
+**文件 1：`src/llamafactory/model/patcher.py`**
+
+新增函数 `patch_deepspeed_zero_init_memory()` (line 215-416)，monkey-patch 两个方法：
+
+1. **`Init._partition_param`** — 消除双重分配 + 强制 gc/malloc_trim
+   ```python
+   # 原始（双重分配）：
+   partitioned_tensor = torch.empty(size, device='cpu')     # malloc
+   partitioned_tensor = pin_memory(partitioned_tensor)       # cudaHostAlloc + copy + free
+
+   # 修复（直接 pinned）：
+   partitioned_tensor = torch.empty(size, device='cpu', pin_memory=True)  # 跳过 malloc
+   ```
+   大参数分区后额外执行 `del one_dim_param; gc.collect(); libc.malloc_trim(0)`
+
+2. **`Init._post_init_method`** — 模块级清理 + 诊断日志
+   - 每个 >100MB 参数的模块处理后执行 `gc.collect()` + `malloc_trim(0)`
+   - 每 10 秒输出一次 `[DIAG] zero.Init progress: ... | RSS=...GB, Avail=...GB`
+
+**文件 2：`src/llamafactory/model/loader.py`**
+
+在 `from_pretrained()` 之前调用 `patch_deepspeed_zero_init_memory()`（line 174）。
+
+### 什么没有改
+
+- DeepSpeed 源码没有被修改（纯 monkey-patch）
+- v4 shard-by-shard 加载逻辑不受影响
+- deepspeed config (`ds_z3_offload_config.json`) 不需要改
+
+## 测试方法
+
+### 第一步：运行测试
+
+```bash
+cd /home/lpl/zero-baseline/LlamaFactory
+
+# 建议配合设置（可选，可以先不设看看纯 patch 效果）
+export MALLOC_ARENA_MAX=2
+export MALLOC_TRIM_THRESHOLD_=0
+
+# 运行 DeepSeek-V3 训练
+deepspeed --num_gpus 4 src/llamafactory/launcher.py \
+    examples/train_lora/dpsk3_lora_sft_ds3.yaml
+```
+
+同时在另一个终端监控内存：
+```bash
+while true; do echo "$(date +%H:%M:%S) $(grep MemAvailable /proc/meminfo)"; sleep 15; done
+```
+
+### 第二步：判断结果
+
+**成功标志：**
+1. 日志中出现 `[DIAG] After from_pretrained:` → Phase 0 完成，进入 Phase 1
+2. 日志中出现 `[DIAG] ===== Shard-by-shard loading START =====` → Phase 1 开始
+3. 进程没有被 OOM killed（没有 exitcode -15）
+4. `[DIAG] zero.Init progress:` 日志显示 Avail 始终 > 100GB
+
+**失败标志：**
+1. 仍然 OOM killed（exitcode -15）
+2. 只有 `Before from_pretrained`，没有 `After from_pretrained`
+3. `[DIAG] zero.Init progress:` 日志中 Avail 持续下降到 < 200GB
+
+**部分改善标志：**
+1. 进度从 697/967 提升（如到 800+），但仍 OOM
+2. 说明修复有效但不充分，需要叠加其他措施
+
+### 第三步：如果部分改善或失败
+
+按优先级尝试：
+
+**3a. 叠加 jemalloc（最快尝试）**
+```bash
+# 找到 jemalloc
+find / -name "libjemalloc*" 2>/dev/null
+# 或安装
+apt-get install libjemalloc-dev  # 或 conda install jemalloc
+
+# 使用
+LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 deepspeed --num_gpus 4 ...
+```
+
+**3b. 禁用 pin_memory（可快速验证是否是 pin 相关问题）**
+
+修改 `examples/deepspeed/ds_z3_offload_config.json`：
+```json
+"offload_param": {
+    "device": "cpu",
+    "pin_memory": false    // ← 改为 false
+}
+```
+**注意**：这会降低训练速度（CPU↔GPU 传输变慢），但可以验证 pin_memory 是否是主要内存来源。
+
+**3c. 收集更详细的诊断数据**
+
+如果上述方法都不够，需要在 `_partition_param` 内部添加逐参数 RSS 日志：
+
+```python
+# 在 patcher.py 的 _patched_partition_param 中，free_param 前后添加：
+import os
+def _get_rss_gb():
+    with open(f"/proc/{os.getpid()}/status") as f:
+        for line in f:
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) / 1024 / 1024
+    return -1
+
+rss_before = _get_rss_gb()
+free_param(param)
+gc.collect()
+if _has_malloc_trim: _libc.malloc_trim(0)
+rss_after = _get_rss_gb()
+logger.info_rank0(
+    f"[DIAG] param {param.ds_id} shape={param.ds_shape} "
+    f"RSS: {rss_before:.2f}→{rss_after:.2f}GB (delta={rss_after-rss_before:+.2f}GB)"
+)
+```
+
+这会产出每个参数的 RSS 变化，可以精确定位哪些参数导致内存增长。
+
+## 备选方案（如果所有上述方法都不够）
+
+### 方案 D：meta device 初始化（彻底解决，但实现复杂）
+
+核心思路：跳过 `deepspeed.zero.Init()` 的 materialization，直接从 checkpoint 加载。
+
+**实现步骤：**
+
+1. 允许 ZeRO-3 使用 `low_cpu_mem_usage=True`：
+   ```python
+   # patcher.py patch_config() 中，移除 ZeRO-3 的限制：
+   # 原始：init_kwargs["low_cpu_mem_usage"] = ... and (not is_deepspeed_zero3_enabled())
+   # 修改：init_kwargs["low_cpu_mem_usage"] = model_args.low_cpu_mem_usage
+   ```
+
+2. 模型在 meta device 上创建（0 内存）
+
+3. 在 shard-by-shard 加载中，对每个参数：
+   - 从 checkpoint 读取权重
+   - 在 CPU 上创建实际 tensor
+   - 手动调用 DeepSpeed 的 `_convert_to_deepspeed_param()` + `partition()`
+   - 释放全尺寸 tensor
+
+**难点：**
+- 需要处理 WeightConverter（expert fusion）
+- 需要手动管理 DeepSpeed 的参数元数据（ds_id, ds_tensor, ds_status 等）
+- 需要处理 `dist.broadcast()` 同步
+- FP8→BF16 转换
+
+**工作量估计：** 200-400 行代码，需要深度理解 DeepSpeed partition_parameters.py
+
+### 方案 E：增加 swap
+
+如果以上都不行，可以临时使用 swap 扩展内存（只在 Phase 0 期间需要）：
+```bash
+# 创建 500GB swap 文件（在快速 NVMe 上）
+sudo fallocate -l 500G /mnt/data/swapfile
+sudo chmod 600 /mnt/data/swapfile
+sudo mkswap /mnt/data/swapfile
+sudo swapon /mnt/data/swapfile
+```
+Phase 0 完成后 swap 不再使用（Phase 1 的 shard-by-shard 加载内存可控）。
+
+## 模型参数详情（参考）
 
 ```
 模型配置：
-- num_hidden_layers: 61
+- model_type: deepseek_v3
+- num_hidden_layers: 61 (前3层 dense, 后58层 MoE)
 - n_routed_experts: 256
 - hidden_size: 7168
 - moe_intermediate_size: 2048
-- first_k_dense_replace: 3 (前3层是dense，后58层是MoE)
+- intermediate_size: 18432 (shared experts 和 dense layers 使用)
 - kv_lora_rank: 512, q_lora_rank: 1536
-```
+- quantization_config: fp8, weight_block_size [128, 128]
+- 总参数：967 个 nn.Parameter
 
-每个 MoE 层在 BF16 下的参数大小：
-```
-experts.gate_up_proj: [256, 4096, 7168] × 2 bytes = 15.0 GB
-experts.down_proj:    [256, 7168, 2048] × 2 bytes = 7.5 GB
-shared_experts (3个):                              ≈ 0.75 GB
-Attention (MLA):                                   ≈ 0.37 GB
-其他:                                              ≈ 0.05 GB
-每个 MoE 层合计:                                   ≈ 23.6 GB
-```
+每 MoE 层 BF16 大小：
+- experts.gate_up_proj: [256, 4096, 7168] × 2B = 15.0 GB
+- experts.down_proj:    [256, 7168, 2048] × 2B = 7.5 GB
+- shared_experts:                               ≈ 0.75 GB
+- Attention (MLA):                              ≈ 0.37 GB
+- 合计:                                        ≈ 23.6 GB
 
-全模型 BF16 参数量：
-```
-58 × 23.6 GB (MoE) + 3 × ~0.5 GB (dense) + ~5 GB (embeddings/lm_head)
-≈ 1,376 GB (BF16 总量)
-```
+全模型 BF16: 58 × 23.6 + 3 × ~0.5 + ~5 ≈ 1,376 GB
 
-#### 3.2 ZeRO-3 分区后的理论内存
-
-ZeRO-3 将参数分区到 4 个 rank：
-```
-理论分区后：1,376 GB / 4 = 344 GB/rank
-4 个 rank 合计：1,376 GB
-```
-
-但实际观察到的是 **~1,812 GB**（系统级），约为理论值的 **1.3x**。
-
-#### 3.3 额外内存开销来源
-
-**关键问题：glibc malloc 内存保留**
-
-在 `deepspeed.zero.Init()` 中，每个参数的 materialization 过程：
-1. 创建全尺寸 BF16 tensor（例如 `experts.gate_up_proj`: 15.0 GB）
-2. `torch.empty(...)` 分配内存
-3. DeepSpeed 立刻将其分区（partition）到各 rank
-4. 每个 rank 只保留 1/4 = 3.75 GB
-5. 剩余的 3/4 = 11.25 GB 被 `free()`
-
-**但是**：glibc 的 malloc 实现**不会立即将 `free()` 的内存归还给 OS**。
-对于大块分配（通过 mmap），理论上应该立即归还，但实际行为受以下因素影响：
-- PyTorch 的内存分配器层（caching allocator for CPU）
-- glibc 的 `MALLOC_TRIM_THRESHOLD_` 默认值
-- 内存碎片
-
-这导致了 `top`/`htop` 看到的 RSS 远高于实际使用量。
-
-#### 3.4 每个参数的内存峰值
-
-在 materialize 单个参数时（以 `experts.gate_up_proj` 为例）：
-```
-步骤 1: 分配全尺寸 tensor = 15.0 GB
-步骤 2: 分区，保留 1/4 = 3.75 GB
-步骤 3: free 3/4 = 11.25 GB（但可能不归还 OS）
-```
-
-如果 malloc 不归还内存，累积到 layer 40 时：
-```
-累积"已分区保留" = 40层 × 23.6 GB / 4 rank ≈ 236 GB/rank
-累积"已free但未归还" = 取决于 allocator 行为
-实际 RSS ≈ 分区保留 + 未归还的 free 内存
-```
-
-### 4. Checkpoint 结构分析
-
-DeepSeek-V3 checkpoint（FP8 量化）：
-```
-总 shard 数：163 个
-总 key 数：91,991
-  - expert keys：90,978 (99%)
-  - non-expert keys：1,013 (1%)
-  - weight_scale_inv keys：45,808 (FP8 量化 scale)
-```
-
-**重要**：checkpoint 是 FP8 格式，但 `deepspeed.zero.Init()` 在创建模型时使用 BF16，
-这意味着：
-- Phase 0（模型创建）：每个参数以 BF16 创建 → 1,376 GB
-- Phase 1（权重加载）：从 FP8 checkpoint 加载 → 约 688 GB 磁盘大小
-- 加载时 FP8→BF16 转换会有临时内存开销
-
-### 5. 与 DeepSeek-V2-Lite (14B) 的对比
-
-DeepSeek-V2-Lite 成功加载：
-```
-shard-by-shard 正常执行（3/3 boundary layers completed, 0 errors）
-峰值 RSS ≈ 34 GB/process
-htop 总内存 ≈ 80 GB（4 进程 × ~20 GB 稳态）
-```
-
-V2-Lite 之所以成功，是因为：
-1. 模型小（14B），Phase 0 的参数 materialization 内存开销可控
-2. MoE 规模小（64 experts vs V3 的 256 experts）
-3. 分区后单 rank 只需约 7 GB
-
-## 解决方案方向
-
-### 方案 A：减少 malloc 内存保留（最低侵入性）
-
-1. **设置 `MALLOC_TRIM_THRESHOLD_=0`**
-   ```bash
-   export MALLOC_TRIM_THRESHOLD_=0
-   ```
-   强制 glibc 在 free 时立即 trim heap。
-
-2. **在 zero.Init 过程中定期调用 `malloc_trim`**
-   ```python
-   import ctypes
-   libc = ctypes.CDLL("libc.so.6")
-   libc.malloc_trim(0)  # 强制归还 free 的内存给 OS
-   ```
-
-3. **使用 jemalloc 替代 glibc malloc**
-   ```bash
-   LD_PRELOAD=/path/to/libjemalloc.so python ...
-   ```
-   jemalloc 的内存归还策略更激进。
-
-### 方案 B：patch deepspeed.zero.Init 的参数创建过程
-
-在每个参数创建和分区后，强制释放内存：
-```python
-# 在 deepspeed/runtime/zero/partition_parameters.py 中
-# _post_init_method() 里，每次参数分区后：
-import gc
-gc.collect()
-ctypes.CDLL("libc.so.6").malloc_trim(0)
-```
-
-### 方案 C：分层初始化模型（中等侵入性）
-
-不使用 `deepspeed.zero.Init()` 全局 context，而是逐层创建模型：
-1. 在 meta device 上创建整个模型（几乎不占内存）
-2. 逐层将参数从 meta 转换为实际 tensor
-3. 每层转换后立即进行 ZeRO-3 分区
-4. 释放临时内存后再处理下一层
-
-### 方案 D：直接在 meta device 创建 + 从 checkpoint 加载（最高效但最复杂）
-
-1. 在 meta device 创建整个模型
-2. 跳过 zero.Init() 的参数 materialization
-3. 直接通过 shard-by-shard 加载从 checkpoint 填充参数
-4. 需要处理 FP8→BF16 转换
-
-## 推荐的下一步
-
-1. **先尝试方案 A**：设置 `MALLOC_TRIM_THRESHOLD_=0` 或 `LD_PRELOAD=jemalloc`，
-   这是最简单的，可能已经足够减少 ~30% 的内存开销
-
-2. **如果方案 A 不够**：尝试方案 B，在 DeepSpeed 的参数创建循环中插入 `malloc_trim`
-
-3. **需要更多调试信息**：在 `deepspeed.zero.Init` 的 `_post_init_method` 中添加内存日志，
-   精确追踪每个参数创建和分区后的 RSS 变化
-
-## 附录：日志关键片段
-
-### OOM 前最后的进度
-```
-[2025-02-21 15:57:42] [DeepSpeed] partition 632 / 967 parameters
-[2025-02-21 15:57:42] model.layers.40.mlp.experts.down_proj
-```
-
-### 进程被杀
-```
-exitcode: -15  (SIGTERM from OOM killer)
-```
-
-### 内存恢复
-```
-15:57:52  mem_used=1,856 GB  mem_avail=208 GB  ← OOM
-15:58:07  mem_used=1,447 GB  mem_avail=617 GB  ← 进程被杀，回收中
-15:58:22  mem_used=741 GB    mem_avail=1,323 GB ← 大部分已回收
+Checkpoint: 163 shards, 91,991 keys (99% expert keys), FP8 格式
+训练配置: examples/train_lora/dpsk3_lora_sft_ds3.yaml
+DeepSpeed配置: examples/deepspeed/ds_z3_offload_config.json (stage3, offload CPU, pin_memory=true)
 ```

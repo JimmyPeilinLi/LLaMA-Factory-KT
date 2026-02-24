@@ -40,6 +40,7 @@ from .model_utils.valuehead import load_valuehead_params
 from .patcher import (
     _get_mem_info,
     patch_config,
+    patch_deepspeed_zero_init_memory,
     patch_model,
     patch_processor,
     patch_tokenizer,
@@ -170,6 +171,7 @@ def load_model(
 
         # Patch model loading to be shard-by-shard for ZeRO-3 (reduces peak CPU memory)
         logger.info_rank0(f"[DIAG] Before patch_zero3_model_loading: {_get_mem_info()}")
+        patch_deepspeed_zero_init_memory()
         patch_zero3_model_loading()
 
         if model_args.mixture_of_depths == "load":
