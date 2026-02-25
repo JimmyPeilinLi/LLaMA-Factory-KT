@@ -25,6 +25,23 @@ if TYPE_CHECKING:
 logger = logging.get_logger(__name__)
 
 
+def _get_parameter_shape_for_discovery(param) -> tuple[int, ...]:
+    r"""Return the original parameter shape when ZeRO partitions flatten tensors."""
+    if param.ndim != 1:
+        return tuple(param.shape)
+
+    # DeepSpeed ZeRO-3 may replace a fused expert 3D tensor with a local 1D shard while
+    # preserving the global shape in `ds_shape`.
+    ds_shape = getattr(param, "ds_shape", None)
+    if ds_shape is not None:
+        try:
+            return tuple(int(dim) for dim in ds_shape)
+        except TypeError:
+            pass
+
+    return tuple(param.shape)
+
+
 def find_all_linear_modules(model: "PreTrainedModel", freeze_vision_tower: bool) -> list[str]:
     r"""Find all available modules to apply LoRA, GaLore or APOLLO."""
     model_type = getattr(model.config, "model_type", None)
@@ -63,7 +80,7 @@ def find_all_expert_parameters(model: "PreTrainedModel") -> list[str]:
     patterns = set()
     for module_name, module in model.named_modules():
         for param_name, param in module.named_parameters(recurse=False):
-            if param.ndim == 3:
+            if len(_get_parameter_shape_for_discovery(param)) == 3:
                 # Extract layer-agnostic suffix pattern for matching across all layers.
                 # e.g., "model.layers.0.mlp.experts" -> suffix "mlp.experts"
                 parts = module_name.split(".")
