@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /mnt/data2/models/Qwen3-235B-A22B-Instruct-2507
+model_name_or_path: /mnt/raid/models/Qwen3-235B-A22B-Instruct-2507
 trust_remote_code: true
 
 ### method
@@ -19,7 +19,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/lpl/kernel_new_test_adapter/zero_lora_qwen3_235b_livebench_math
+output_dir: /mnt/raid/lpl/zero_test_output/qwen3_235b
 logging_steps: 1
 save_steps: 200
 plot_loss: true

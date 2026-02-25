@@ -22,7 +22,7 @@ from transformers.integrations import is_deepspeed_zero3_enabled
 from ..extras import logging
 from ..extras.constants import EngineName
 from .model_utils.ktransformers import get_kt_peft_model, load_kt_peft_model
-from .model_utils.misc import find_all_linear_modules, find_expanded_modules
+from .model_utils.misc import find_all_expert_parameters, find_all_linear_modules, find_expanded_modules
 from .model_utils.quantization import QuantizationMethod
 from .model_utils.unsloth import get_unsloth_peft_model, load_unsloth_peft_model
 from .model_utils.visual import COMPOSITE_MODELS, get_forbidden_modules, patch_target_modules
@@ -217,6 +217,9 @@ def _setup_lora_tuning(
         else:
             target_modules = finetuning_args.lora_target
 
+        # Discover fused MoE expert 3D parameters (e.g., Qwen3-MoE, DeepSeek-V2/V3)
+        expert_parameters = find_all_expert_parameters(model)
+
         if model_args.use_kt:
             new_list = []
             for m in target_modules:
@@ -260,6 +263,8 @@ def _setup_lora_tuning(
                 "use_dora": finetuning_args.use_dora,
                 "modules_to_save": finetuning_args.additional_target,
             }
+            if expert_parameters:
+                peft_kwargs["target_parameters"] = expert_parameters
         elif finetuning_args.finetuning_type == "oft":
             peft_kwargs = {
                 "r": finetuning_args.oft_rank,

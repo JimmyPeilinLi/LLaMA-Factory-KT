@@ -1,5 +1,5 @@
 ### model
-model_name_or_path: /mnt/data3/models/DeepSeek-V3
+model_name_or_path: /mnt/raid/models/DeepSeek-V3
 
 ### method
 stage: sft
@@ -18,7 +18,7 @@ preprocessing_num_workers: 16
 dataloader_num_workers: 4
 
 ### output
-output_dir: /mnt/data/lpl/kernel_new_test_adapter/zero_lora_deepseek3_671b_livebench_math
+output_dir: /mnt/raid/lpl/zero_test_output/dpsk3_671b
 logging_steps: 1
 save_steps: 200
 plot_loss: true

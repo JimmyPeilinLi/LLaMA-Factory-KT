@@ -52,6 +52,37 @@ def find_all_linear_modules(model: "PreTrainedModel", freeze_vision_tower: bool)
     return list(module_names)
 
 
+def find_all_expert_parameters(model: "PreTrainedModel") -> list[str]:
+    r"""Find fused MoE expert nn.Parameter objects for LoRA target_parameters.
+
+    Some MoE models (e.g., Qwen3-MoE, DeepSeek-V2/V3, Mixtral) store expert weights as fused
+    3D nn.Parameter tensors instead of individual nn.Linear modules. Standard PEFT LoRA cannot
+    discover these via target_modules. This function finds them so they can be passed as
+    target_parameters to LoraConfig.
+    """
+    patterns = set()
+    for module_name, module in model.named_modules():
+        for param_name, param in module.named_parameters(recurse=False):
+            if param.ndim == 3:
+                # Extract layer-agnostic suffix pattern for matching across all layers.
+                # e.g., "model.layers.0.mlp.experts" -> suffix "mlp.experts"
+                parts = module_name.split(".")
+                for i, part in enumerate(parts):
+                    if part.isdigit():
+                        suffix = ".".join(parts[i + 1 :])
+                        break
+                else:
+                    suffix = module_name
+
+                pattern = f"{suffix}.{param_name}" if suffix else param_name
+                patterns.add(pattern)
+
+    if patterns:
+        logger.info_rank0("Found expert parameters: {}".format(",".join(sorted(patterns))))
+
+    return sorted(patterns)
+
+
 def find_expanded_modules(model: "PreTrainedModel", target_modules: list[str], num_layer_trainable: int) -> list[str]:
     r"""Find the modules in the expanded blocks to apply lora."""
     num_layers = getattr(model.config, "num_hidden_layers", None)
