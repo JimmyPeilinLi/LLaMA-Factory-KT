@@ -29,9 +29,9 @@ kt_config:
   kt_threadpool_count: 2
   kt_num_gpu_experts: 0
   kt_max_cache_depth: 2
-  kt_use_lora_experts: false
-  kt_lora_expert_num: 0
-  kt_lora_expert_intermediate_size: 1024
+  kt_use_lora_experts: true
+  kt_lora_expert_num: 1
+  kt_lora_expert_intermediate_size: 256
   # lora_rank: auto (bridged from training YAML's lora_rank)
   # lora_alpha: auto (defaults to lora_rank * 2)
   # kt_weight_path: auto (bridged from training YAML's kt_weight_path)

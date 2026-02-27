@@ -13,7 +13,7 @@ machine_rank: 0
 main_training_function: main
 mixed_precision: bf16  # or fp16
 num_machines: 1  # the number of nodes
-num_processes: 4  # the number of GPUs in all nodes
+num_processes: 2  # the number of GPUs in all nodes
 rdzv_backend: static
 same_network: true
 tpu_env: []
@@ -35,4 +35,4 @@ kt_config:
   # lora_rank: auto (bridged from training YAML's lora_rank)
   # lora_alpha: auto (defaults to lora_rank * 2)
   # kt_weight_path: auto (bridged from training YAML's kt_weight_path)
-  # model_max_length: 30720
+  model_max_length: 15360

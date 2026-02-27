@@ -17,7 +17,7 @@
 
 import json
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Literal, Self
+from typing import Any, Literal, Optional, Self
 
 import torch
 from omegaconf import OmegaConf
@@ -519,6 +519,14 @@ class KTransformersArguments:
             "If None, experts are loaded from HuggingFace model in BF16."
         },
     )
+    kt_expert_checkpoint_path: str | None = field(
+        default=None,
+        metadata={
+            "help": "Path to model checkpoint containing expert weights for BF16 backward pass. "
+            "Supports FP8 checkpoints (auto-dequantized to BF16). "
+            "Use when model_name_or_path lacks expert weights (e.g. AttnOnlyBf16)."
+        },
+    )
     kt_moe_lora_device: str = field(
         default="gpu",
         metadata={
@@ -527,19 +535,19 @@ class KTransformersArguments:
             "'cpu': LoRA params on CPU (not implemented yet)."
         },
     )
-    kt_use_lora_experts: bool = field(
-        default=False,
+    kt_use_lora_experts: Optional[bool] = field(
+        default=None,
         metadata={
             "help": "Use LoRA Experts instead of per-expert LoRA. "
             "LoRA Experts are trainable MLP modules on GPU that process all tokens."
         },
     )
-    kt_lora_expert_num: int = field(
-        default=2,
+    kt_lora_expert_num: Optional[int] = field(
+        default=None,
         metadata={"help": "Number of LoRA Experts per MoE layer."},
     )
-    kt_lora_expert_intermediate_size: int = field(
-        default=1024,
+    kt_lora_expert_intermediate_size: Optional[int] = field(
+        default=None,
         metadata={"help": "Intermediate size of each LoRA Expert MLP."},
     )
 
@@ -567,11 +575,11 @@ class KTransformersArguments:
                 "kt_moe_lora_device='cpu' is not implemented yet. "
                 "Please use 'gpu' (default). CPU mode will be added in a future release."
             )
-        if self.kt_lora_expert_num < 1:
+        if self.kt_lora_expert_num is not None and self.kt_lora_expert_num < 1:
             raise ValueError(
                 f"kt_lora_expert_num must be >= 1, got {self.kt_lora_expert_num}"
             )
-        if self.kt_lora_expert_intermediate_size < 1:
+        if self.kt_lora_expert_intermediate_size is not None and self.kt_lora_expert_intermediate_size < 1:
             raise ValueError(
                 f"kt_lora_expert_intermediate_size must be >= 1, got {self.kt_lora_expert_intermediate_size}"
             )

@@ -45,6 +45,10 @@ def find_all_linear_modules(model: "PreTrainedModel", freeze_vision_tower: bool)
         if any(forbidden_module in name for forbidden_module in forbidden_modules):
             continue
 
+        # lora_experts are fully trainable MLPs, not targets for PEFT LoRA
+        if "lora_experts" in name:
+            continue
+
         if "Linear" in module.__class__.__name__ and "Embedding" not in module.__class__.__name__:
             module_names.add(name.split(".")[-1])
 

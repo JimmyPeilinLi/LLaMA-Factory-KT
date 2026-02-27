@@ -146,16 +146,22 @@ def _verify_model_args(
 def _bridge_kt_env_vars(model_args: "ModelArguments", finetuning_args: "FinetuningArguments") -> None:
     """Bridge LLaMA-Factory KT/LoRA args to accelerate KTransformersPlugin via env vars.
 
-    Only sets env vars that are NOT already set (i.e. not already provided by kt_config.yaml),
-    so the accelerate config file always takes precedence.
+    Training YAML values take precedence over accelerate config (kt_config.yaml),
+    so users only need to set kt_use_lora_experts etc. in the training YAML.
     """
     mapping = {
         "ACCELERATE_KT_WEIGHT_PATH": getattr(model_args, "kt_weight_path", None),
+        "ACCELERATE_KT_EXPERT_CHECKPOINT_PATH": getattr(model_args, "kt_expert_checkpoint_path", None),
+        "ACCELERATE_KT_MODEL_MAX_LENGTH": getattr(model_args, "model_max_length", None),
         "ACCELERATE_KT_LORA_RANK": getattr(finetuning_args, "lora_rank", None),
         "ACCELERATE_KT_LORA_ALPHA": getattr(finetuning_args, "lora_alpha", None),
+        "ACCELERATE_KT_USE_LORA_EXPERTS": getattr(model_args, "kt_use_lora_experts", None),
+        "ACCELERATE_KT_LORA_EXPERT_NUM": getattr(model_args, "kt_lora_expert_num", None),
+        "ACCELERATE_KT_LORA_EXPERT_INTERMEDIATE_SIZE": getattr(model_args, "kt_lora_expert_intermediate_size", None),
     }
     for env_key, value in mapping.items():
-        if value is not None and env_key not in os.environ:
+        if value is not None:
+            # Training YAML takes precedence over accelerate config env vars
             os.environ[env_key] = str(value)
 
 
@@ -473,6 +479,18 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
 
     model_args.device_map = {"": get_current_device()}
     model_args.model_max_length = data_args.cutoff_len
+    if model_args.use_kt and training_args.world_size > 1:
+        # In distributed KT overlap mode, rank0 submits concatenated tokens from all ranks
+        # to the CPU MoE kernel. For small cutoff lengths, this can exceed per-rank max_len.
+        suggested_kt_max_len = data_args.cutoff_len * training_args.world_size
+        if model_args.model_max_length <= 4096 and suggested_kt_max_len > model_args.model_max_length:
+            old_max_len = model_args.model_max_length
+            model_args.model_max_length = suggested_kt_max_len
+            logger.warning_rank0(
+                "KT distributed overlap detected: adjust model_max_length from "
+                f"{old_max_len} to {model_args.model_max_length} "
+                f"(cutoff_len={data_args.cutoff_len}, world_size={training_args.world_size})."
+            )
     model_args.block_diag_attn = data_args.neat_packing
     data_args.packing = data_args.packing if data_args.packing is not None else finetuning_args.stage == "pt"
 
@@ -497,15 +515,31 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
         # lora_alpha, kt_weight_path). Patch them into the live config dict so from_pretrained's
         # KT wrapping sees the correct values.
         hf_kt = getattr(training_args, "hf_kt_config", None)
+        print(
+            f"[_late_bridge] hf_kt={hf_kt is not None}, "
+            f"model_args.kt_use_lora_experts={getattr(model_args, 'kt_use_lora_experts', 'MISSING')}, "
+            f"hf_kt._kt_config before={getattr(hf_kt, '_kt_config', None) if hf_kt else 'N/A'}",
+            flush=True,
+        )
         if hf_kt is not None and hasattr(hf_kt, "_kt_config") and isinstance(hf_kt._kt_config, dict):
             _late_bridge = {
                 "lora_rank": getattr(finetuning_args, "lora_rank", None),
                 "lora_alpha": getattr(finetuning_args, "lora_alpha", None),
                 "kt_weight_path": getattr(model_args, "kt_weight_path", None),
+                "kt_expert_checkpoint_path": getattr(model_args, "kt_expert_checkpoint_path", None),
+                "model_max_length": getattr(model_args, "model_max_length", None),
+                "kt_use_lora_experts": getattr(model_args, "kt_use_lora_experts", None),
+                "kt_lora_expert_num": getattr(model_args, "kt_lora_expert_num", None),
+                "kt_lora_expert_intermediate_size": getattr(model_args, "kt_lora_expert_intermediate_size", None),
             }
             for key, value in _late_bridge.items():
-                if value is not None and key not in hf_kt._kt_config:
+                if value is not None:
+                    # Training YAML takes precedence over accelerate config
                     hf_kt._kt_config[key] = value
+            print(
+                f"[_late_bridge] hf_kt._kt_config after={hf_kt._kt_config}",
+                flush=True,
+            )
 
     return model_args, data_args, training_args, finetuning_args, generating_args
 
