@@ -20,6 +20,13 @@ from peft import LoraConfig, LoraModel, OFTConfig, PeftModel, TaskType, get_peft
 from transformers.integrations import is_deepspeed_zero3_enabled
 
 from ..extras import logging
+from .model_utils.lora_expert import (
+    LORA_EXPERT_CONFIG_NAME,
+    LORA_EXPERT_MODULE_NAME,
+    attach_lora_experts,
+    load_lora_expert_config,
+    set_lora_expert_config,
+)
 from .model_utils.misc import find_all_linear_modules, find_expanded_modules
 from .model_utils.quantization import QuantizationMethod
 from .model_utils.unsloth import get_unsloth_peft_model, load_unsloth_peft_model
@@ -153,6 +160,7 @@ def _setup_lora_tuning(
             logger.info_rank0("Fine-tuning method: {}".format("DoRA" if finetuning_args.use_dora else "LoRA"))
 
     adapter_to_resume = None
+    lora_expert_config = None
 
     if model_args.adapter_name_or_path is not None:
         is_mergeable = True
@@ -177,6 +185,37 @@ def _setup_lora_tuning(
             adapter_to_resume = model_args.adapter_name_or_path[-1]
         else:
             adapter_to_merge = model_args.adapter_name_or_path
+
+        for adapter in model_args.adapter_name_or_path:
+            adapter_config = load_lora_expert_config(
+                adapter,
+                subfolder=model_args.adapter_folder,
+                cache_dir=model_args.cache_dir,
+                revision=model_args.model_revision,
+                token=model_args.hf_hub_token,
+            )
+            if adapter_config is None:
+                continue
+            if lora_expert_config is not None and adapter_config != lora_expert_config:
+                raise ValueError("Cannot combine adapters with different LoRA Expert metadata.")
+            lora_expert_config = adapter_config
+
+        if lora_expert_config is not None:
+            if finetuning_args.use_lora_expert and (
+                finetuning_args.lora_expert_num != lora_expert_config.num_experts
+                or finetuning_args.lora_expert_intermediate_size != lora_expert_config.intermediate_size
+            ):
+                raise ValueError("Requested LoRA Expert arguments do not match the adapter checkpoint metadata.")
+            lora_expert_config = attach_lora_experts(
+                model,
+                config=lora_expert_config,
+                use_kt=model_args.use_kt,
+            )
+            finetuning_args.use_lora_expert = True
+        elif adapter_to_resume is not None and finetuning_args.use_lora_expert:
+            raise ValueError(
+                f"Cannot resume LoRA Expert training because the adapter has no {LORA_EXPERT_CONFIG_NAME} metadata."
+            )
 
         init_kwargs = {
             "subfolder": model_args.adapter_folder,
@@ -222,6 +261,14 @@ def _setup_lora_tuning(
 
         target_modules = patch_target_modules(model, finetuning_args, target_modules)
 
+        if finetuning_args.use_lora_expert and lora_expert_config is None:
+            lora_expert_config = attach_lora_experts(
+                model,
+                num_experts=finetuning_args.lora_expert_num,
+                intermediate_size=finetuning_args.lora_expert_intermediate_size,
+                use_kt=model_args.use_kt,
+            )
+
         if (
             finetuning_args.use_dora
             and getattr(model, "quantization_method", None) is not None
@@ -240,6 +287,12 @@ def _setup_lora_tuning(
             finetuning_args.additional_target = module_names
             logger.warning_rank0("Vocab has been resized, add {} to trainable params.".format(",".join(module_names)))
 
+        modules_to_save = list(finetuning_args.additional_target or [])
+        if lora_expert_config is not None and LORA_EXPERT_MODULE_NAME not in modules_to_save:
+            modules_to_save.append(LORA_EXPERT_MODULE_NAME)
+        if not modules_to_save:
+            modules_to_save = None
+
         if finetuning_args.finetuning_type == "lora":
             peft_kwargs = {
                 "r": finetuning_args.lora_rank,
@@ -248,7 +301,7 @@ def _setup_lora_tuning(
                 "lora_dropout": finetuning_args.lora_dropout,
                 "use_rslora": finetuning_args.use_rslora,
                 "use_dora": finetuning_args.use_dora,
-                "modules_to_save": finetuning_args.additional_target,
+                "modules_to_save": modules_to_save,
             }
         elif finetuning_args.finetuning_type == "oft":
             peft_kwargs = {
@@ -256,7 +309,7 @@ def _setup_lora_tuning(
                 "oft_block_size": finetuning_args.oft_block_size,
                 "target_modules": target_modules,
                 "module_dropout": finetuning_args.module_dropout,
-                "modules_to_save": finetuning_args.additional_target,
+                "modules_to_save": modules_to_save,
             }
 
         if model_args.use_kt:
@@ -292,6 +345,9 @@ def _setup_lora_tuning(
                     **peft_kwargs,
                 )
             model = get_peft_model(model, peft_config)
+
+    if lora_expert_config is not None:
+        set_lora_expert_config(model, lora_expert_config)
 
     if is_trainable and cast_trainable_params_to_fp32:
         for param in filter(lambda p: p.requires_grad, model.parameters()):

@@ -1,0 +1,63 @@
+### experiment
+run_name: qwen3_5_397b_fast_le_smoke_seed42_qjh007
+seed: 42
+data_seed: 42
+
+### model
+model_name_or_path: /mnt/qjh002/models/Qwen3.5-397B-A17B
+trust_remote_code: true
+disable_gradient_checkpointing: true  # Avoid KT non-reentrant cache underflow in this 60-layer smoke.
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.1
+lora_target: all
+use_lora_expert: true
+lora_expert_num: 1
+lora_expert_intermediate_size: 256
+
+### dataset
+dataset: beyond_dialogue_train
+eval_dataset: beyond_dialogue_validation
+dataset_dir: /mnt/qjh007/lpl/heft-lora-rerun-20260801/experimental/data
+template: qwen3_5_nothink
+cutoff_len: 512
+max_samples: 8
+overwrite_cache: true
+preprocessing_num_workers: 8
+dataloader_num_workers: 2
+
+### output
+output_dir: /home/lpl/fast_le/runs/qwen3_5_397b_fast_le_smoke_seed42_qjh007
+logging_steps: 1
+eval_strategy: steps
+eval_steps: 5
+save_strategy: steps
+save_steps: 5
+save_total_limit: 1
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 1
+learning_rate: 1.0e-4
+max_steps: 5
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: false
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### ktransformers
+use_kt: true
+kt_model_max_length: 1024  # Global flattened-token buffer only; data cutoff remains 512.
+# LoRA Expert is owned by LLaMA-Factory. Legacy kt_use_lora_experts fields must stay unset.

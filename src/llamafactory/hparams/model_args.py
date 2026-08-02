@@ -478,17 +478,24 @@ class KTransformersArguments:
         default=None,
         metadata={"help": "Path to expert checkpoint (safetensors) for online conversion."},
     )
+    kt_model_max_length: int | None = field(
+        default=None,
+        metadata={
+            "help": "Minimum global flattened-token capacity for KT MoE buffers. Use this only when "
+            "runtime token expansion (for example VLM dummy-image tokens) exceeds cutoff_len."
+        },
+    )
     kt_use_lora_experts: bool | None = field(
         default=None,
-        metadata={"help": "Whether to use GPU-side LoRA Experts."},
+        metadata={"help": "Deprecated legacy KT-owned LoRA Expert switch. Use `use_lora_expert` instead."},
     )
     kt_lora_expert_num: int | None = field(
         default=None,
-        metadata={"help": "Number of GPU-side LoRA Experts."},
+        metadata={"help": "Deprecated legacy KT-owned LoRA Expert count."},
     )
     kt_lora_expert_intermediate_size: int | None = field(
         default=None,
-        metadata={"help": "Intermediate size for GPU-side LoRA Experts."},
+        metadata={"help": "Deprecated legacy KT-owned LoRA Expert width."},
     )
 
     def get_kt_config_dict(self, finetuning_args: Any, model_max_length: int | None) -> dict[str, Any]:
@@ -499,9 +506,7 @@ class KTransformersArguments:
             "kt_weight_path": self.kt_weight_path,
             "kt_expert_checkpoint_path": self.kt_expert_checkpoint_path,
             "kt_model_max_length": model_max_length,
-            "kt_use_lora_experts": self.kt_use_lora_experts,
-            "kt_lora_expert_num": self.kt_lora_expert_num,
-            "kt_lora_expert_intermediate_size": self.kt_lora_expert_intermediate_size,
+            "kt_use_lora_experts": False,
         }
         return {key: value for key, value in kt_config.items() if value is not None}
 
@@ -510,7 +515,69 @@ class KTransformersArguments:
         if not self.use_kt:
             return
 
-        kt_config = self.get_kt_config_dict(finetuning_args, model_max_length)
+        def is_enabled(value: Any) -> bool:
+            if isinstance(value, str):
+                return value.strip().lower() not in ["", "0", "false", "no", "off", "none"]
+            return bool(value)
+
+        training_kt = getattr(training_args, "kt_config", None)
+        hf_kt = getattr(training_args, "hf_kt_config", None)
+        hf_kt_dict = (
+            hf_kt._kt_config
+            if hf_kt is not None and hasattr(hf_kt, "_kt_config") and isinstance(hf_kt._kt_config, dict)
+            else None
+        )
+        if hf_kt_dict is not None:
+            active_kt_config = hf_kt_dict
+            if isinstance(training_kt, dict) and training_kt is not active_kt_config:
+                active_kt_config.update(training_kt)
+        elif isinstance(training_kt, dict):
+            active_kt_config = training_kt
+        else:
+            active_kt_config = {}
+
+        if (
+            is_enabled(self.kt_use_lora_experts)
+            or is_enabled(os.getenv("ACCELERATE_KT_USE_LORA_EXPERTS"))
+            or is_enabled(active_kt_config.get("kt_use_lora_experts"))
+            or self.kt_lora_expert_num is not None
+            or self.kt_lora_expert_intermediate_size is not None
+            or active_kt_config.get("kt_lora_expert_num") is not None
+            or active_kt_config.get("kt_lora_expert_intermediate_size") is not None
+        ):
+            raise ValueError(
+                "Legacy KT-owned LoRA Experts are disabled on fast_le. Remove `kt_use_lora_experts`, "
+                "`kt_lora_expert_num`, and `kt_lora_expert_intermediate_size`; use the LLaMA-Factory "
+                "`use_lora_expert` arguments instead."
+            )
+
+        os.environ["ACCELERATE_KT_USE_LORA_EXPERTS"] = "False"
+        os.environ.pop("ACCELERATE_KT_LORA_EXPERT_NUM", None)
+        os.environ.pop("ACCELERATE_KT_LORA_EXPERT_INTERMEDIATE_SIZE", None)
+
+        if self.kt_model_max_length is not None and self.kt_model_max_length <= 0:
+            raise ValueError("`kt_model_max_length` must be greater than 0.")
+
+        # KT flattens each per-device micro-batch to [batch * sequence, hidden]. Its distributed path
+        # gathers each rank's local qlen and allocates for their sum on rank 0. This field is therefore
+        # a global flattened-token capacity, not the maximum sequence length of one sample.
+        micro_batch_sizes = [getattr(training_args, "per_device_train_batch_size", 1)]
+        if getattr(training_args, "do_eval", False) or getattr(training_args, "do_predict", False):
+            micro_batch_sizes.append(getattr(training_args, "per_device_eval_batch_size", 1))
+
+        max_micro_batch_size = max(int(batch_size or 1) for batch_size in micro_batch_sizes)
+        world_size = max(int(os.getenv("WORLD_SIZE", "1")), 1)
+        kt_token_capacity = (
+            model_max_length * max_micro_batch_size * world_size if model_max_length is not None else None
+        )
+        if self.kt_model_max_length is not None:
+            kt_token_capacity = max(kt_token_capacity or 0, self.kt_model_max_length)
+
+        kt_config = self.get_kt_config_dict(finetuning_args, kt_token_capacity)
+        active_kt_config.update(kt_config)
+        active_kt_config.pop("enabled", None)
+        active_kt_config.setdefault("kt_skip_expert_loading", True)
+
         env_mapping = {
             "kt_weight_path": "ACCELERATE_KT_WEIGHT_PATH",
             "kt_expert_checkpoint_path": "ACCELERATE_KT_EXPERT_CHECKPOINT_PATH",
@@ -518,24 +585,42 @@ class KTransformersArguments:
             "kt_lora_rank": "ACCELERATE_KT_LORA_RANK",
             "kt_lora_alpha": "ACCELERATE_KT_LORA_ALPHA",
             "kt_use_lora_experts": "ACCELERATE_KT_USE_LORA_EXPERTS",
-            "kt_lora_expert_num": "ACCELERATE_KT_LORA_EXPERT_NUM",
-            "kt_lora_expert_intermediate_size": "ACCELERATE_KT_LORA_EXPERT_INTERMEDIATE_SIZE",
         }
         for key, env_key in env_mapping.items():
-            value = kt_config.get(key)
+            value = active_kt_config.get(key)
             if value is not None:
                 os.environ[env_key] = str(value)
 
-        hf_kt = getattr(training_args, "hf_kt_config", None)
-        if hf_kt is None or not hasattr(hf_kt, "_kt_config") or not isinstance(hf_kt._kt_config, dict):
-            return
+        active_kt_config.pop("kt_lora_expert_num", None)
+        active_kt_config.pop("kt_lora_expert_intermediate_size", None)
+        training_args.kt_config = active_kt_config
 
-        hf_kt._kt_config.update(kt_config)
         gc_enabled = getattr(training_args, "gradient_checkpointing", False) or not getattr(
             self, "disable_gradient_checkpointing", True
         )
         if gc_enabled:
-            hf_kt._kt_config.setdefault("kt_share_cache_pool", True)
+            active_kt_config.setdefault("kt_share_cache_pool", True)
+
+        accelerator_kt_config = {"enabled": True, "kt_config": active_kt_config}
+        accelerator_config = getattr(training_args, "accelerator_config", None)
+        if isinstance(accelerator_config, dict):
+            accelerator_config["kt_config"] = accelerator_kt_config
+        elif accelerator_config is not None:
+            accelerator_config.kt_config = accelerator_kt_config
+
+        from transformers.integrations.kt import HfTrainerKTConfig, set_kt_config
+
+        if hf_kt is None or not hasattr(hf_kt, "_kt_config") or not isinstance(hf_kt._kt_config, dict):
+            hf_kt = HfTrainerKTConfig(active_kt_config)
+            training_args.hf_kt_config = hf_kt
+        else:
+            set_kt_config(hf_kt)
+
+        trainer_config_process = getattr(hf_kt, "trainer_config_process", None)
+        if callable(trainer_config_process):
+            trainer_config_process(training_args)
+
+        os.environ["ACCELERATE_USE_KT"] = "true"
 
 
 @dataclass

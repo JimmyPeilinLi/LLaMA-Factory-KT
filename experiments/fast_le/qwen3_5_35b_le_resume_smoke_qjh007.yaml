@@ -1,0 +1,53 @@
+### experiment
+run_name: qwen3_5_35b_fast_le_resume_smoke_seed42_qjh007
+seed: 42
+data_seed: 42
+
+### model
+model_name_or_path: /mnt/qjh007/lpl/models/Qwen3.5-35B-A3B
+adapter_name_or_path: /home/lpl/fast_le/runs/qwen3_5_35b_fast_le_smoke_seed42_qjh007/checkpoint-5
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+# LE is intentionally omitted: lora_expert_config.json must reconstruct it automatically.
+
+### dataset
+dataset: beyond_dialogue_train
+eval_dataset: beyond_dialogue_validation
+dataset_dir: /mnt/qjh007/lpl/heft-lora-rerun-20260801/experimental/data
+template: qwen3_5_nothink
+cutoff_len: 1024
+max_samples: 48
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: /home/lpl/fast_le/runs/qwen3_5_35b_fast_le_resume_smoke_seed42_qjh007
+logging_steps: 1
+eval_strategy: steps
+eval_steps: 6
+save_strategy: steps
+save_steps: 6
+save_total_limit: 1
+plot_loss: false
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 2
+max_steps: 6
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+resume_from_checkpoint: /home/lpl/fast_le/runs/qwen3_5_35b_fast_le_smoke_seed42_qjh007/checkpoint-5
+
+### ktransformers
+use_kt: true
+# Standard PEFT/Trainer resume plus KT fused expert LoRA restore; no custom runner.

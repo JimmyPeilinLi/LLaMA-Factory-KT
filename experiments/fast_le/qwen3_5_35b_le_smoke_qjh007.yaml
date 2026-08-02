@@ -1,0 +1,61 @@
+### experiment
+run_name: qwen3_5_35b_fast_le_smoke_seed42_qjh007
+seed: 42
+data_seed: 42
+
+### model
+model_name_or_path: /mnt/qjh007/lpl/models/Qwen3.5-35B-A3B
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.1
+lora_target: all
+use_lora_expert: true
+lora_expert_num: 1
+lora_expert_intermediate_size: 256
+
+### dataset
+dataset: beyond_dialogue_train
+eval_dataset: beyond_dialogue_validation
+dataset_dir: /mnt/qjh007/lpl/heft-lora-rerun-20260801/experimental/data
+template: qwen3_5_nothink
+cutoff_len: 1024
+max_samples: 48
+overwrite_cache: true
+preprocessing_num_workers: 16
+dataloader_num_workers: 4
+
+### output
+output_dir: /home/lpl/fast_le/runs/qwen3_5_35b_fast_le_smoke_seed42_qjh007
+logging_steps: 1
+eval_strategy: steps
+eval_steps: 5
+save_strategy: steps
+save_steps: 5
+save_total_limit: 1
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4
+max_steps: 5
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### ktransformers
+use_kt: true
+# LoRA Expert is owned by LLaMA-Factory. Legacy kt_use_lora_experts fields must stay unset.

@@ -38,6 +38,7 @@ from .callbacks import (
     ModuleProfilerCallback,
     PissaConvertCallback,
     ReporterCallback,
+    SaveLoRAExpertConfigCallback,
     TorchProfilerCallback,
 )
 from .dpo import run_dpo
@@ -72,6 +73,8 @@ def _training_function(config: dict[str, Any]) -> None:
     model_args, data_args, training_args, finetuning_args, generating_args = get_train_args(args)
 
     callbacks.append(LogCallback())
+    if finetuning_args.finetuning_type == "lora":
+        callbacks.append(SaveLoRAExpertConfigCallback())
     if finetuning_args.pissa_convert:
         callbacks.append(PissaConvertCallback())
 

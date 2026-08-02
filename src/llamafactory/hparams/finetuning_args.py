@@ -88,6 +88,18 @@ class LoraArguments:
             )
         },
     )
+    use_lora_expert: bool = field(
+        default=False,
+        metadata={"help": "Whether to add LLaMA-Factory-owned GPU LoRA Experts after each MoE block."},
+    )
+    lora_expert_num: int = field(
+        default=2,
+        metadata={"help": "Number of un-routed SwiGLU LoRA Experts evaluated for every token."},
+    )
+    lora_expert_intermediate_size: int = field(
+        default=1024,
+        metadata={"help": "Intermediate width of each SwiGLU LoRA Expert."},
+    )
     loraplus_lr_ratio: float | None = field(
         default=None,
         metadata={"help": "LoRA plus learning rate ratio (lr_B / lr_A)."},
@@ -596,6 +608,15 @@ class FinetuningArguments(
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.hyper_parallel_cp_size > 0, "`hyper_parallel_cp_size` must be greater than 0."
+
+        if self.use_lora_expert and self.finetuning_type != "lora":
+            raise ValueError("`use_lora_expert` is only valid for LoRA training.")
+
+        if self.use_lora_expert and self.lora_expert_num <= 0:
+            raise ValueError("`lora_expert_num` must be greater than 0.")
+
+        if self.use_lora_expert and self.lora_expert_intermediate_size <= 0:
+            raise ValueError("`lora_expert_intermediate_size` must be greater than 0.")
 
         if self.stage == "ppo" and self.reward_model is None:
             raise ValueError("`reward_model` is necessary for PPO training.")
