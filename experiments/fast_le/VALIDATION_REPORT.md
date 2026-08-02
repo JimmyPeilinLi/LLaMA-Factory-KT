@@ -37,7 +37,7 @@ The focused suite completed 11/11 tests with four benign third-party warnings. C
 - torch 2.9 frozen/trainable Conv3D guard
 - KT non-reentrant checkpoint selection
 
-The complete `tests + tests_v1` tree also collected all 311 tests. An offline full run produced 108 passed, 124 skipped, 5 expected failures, 1 unexpected pass, 65 failures, and 9 setup errors. The failed/error set did not contain a fast_le test; sampled traces consistently show missing uncached Hugging Face fixtures such as `llamafactory/tiny-random-qwen3`. The full log is `/home/lpl/fast_le/test_logs/full_pytest_20260802.log`. Models were not downloaded merely to turn these environment failures green.
+The complete `tests + tests_v1` tree also collected all 311 tests. An offline full run produced 108 passed, 124 skipped, 5 expected failures, 1 unexpected pass, 65 failures, and 9 setup errors. The failed/error set did not contain a fast_le test. Environment failures were dominated by missing uncached Hugging Face fixtures such as `llamafactory/tiny-random-qwen3`; optional-backend tests also reported that Megatron Bridge was not installed. The full log is `/home/lpl/fast_le/test_logs/full_pytest_20260802.log`. Models were not downloaded merely to turn these environment failures green.
 
 Targeted Ruff, format, Python compilation, `git diff --check`, and the repository license check passed. Repository-wide `make style` was not used for the final tree because qjh007 has Ruff 0.16.1 while the Makefile pins 0.15.5; four unrelated formatting side effects were removed. All changed Python files pass the available Ruff checks.
 

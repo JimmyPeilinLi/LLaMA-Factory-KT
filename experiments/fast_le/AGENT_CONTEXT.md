@@ -65,7 +65,7 @@ With this exact kt_kernel/PyTorch/FSDP2 stack, 397B non-reentrant activation che
 ## Test status
 
 - Focused tests: 11 passed.
-- Full offline tree: 311 collected; 108 passed, 124 skipped, 5 xfailed, 1 xpassed, 65 failed, and 9 setup errors. Failures/errors were missing uncached Hugging Face fixtures, with no fast_le test in that set; see `/home/lpl/fast_le/test_logs/full_pytest_20260802.log`.
+- Full offline tree: 311 collected; 108 passed, 124 skipped, 5 xfailed, 1 xpassed, 65 failed, and 9 setup errors. Environment failures were dominated by missing uncached Hugging Face fixtures and also included an unavailable optional Megatron Bridge backend; no fast_le test was in that set. See `/home/lpl/fast_le/test_logs/full_pytest_20260802.log`.
 - 35B checkpoint-5 audit: pass.
 - 397B checkpoint-5 audit: pass.
 - 35B checkpoint-6 resume audit: pass.
