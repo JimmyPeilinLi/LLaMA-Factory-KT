@@ -14,6 +14,7 @@
 
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 from dataclasses import asdict, dataclass
@@ -53,6 +54,7 @@ FORBIDDEN_PATH_PARTS = (
     ".generate_linear.",
     ".prefill_linear.",
 )
+ACCELERATOR_DEVICE_TYPES = frozenset(("cuda", "xpu", "npu"))
 
 
 def canonical_json_sha256(value: Any) -> str:
@@ -309,8 +311,22 @@ def resolve_eligible_gpu_lora_targets(
     *,
     require_gpu: bool = True,
     expected_count: int | None = None,
+    fsdp_staging_device: str | None = None,
 ) -> TargetManifest:
-    """Resolve the exact logical GPU attention projections allowed by the KT variant contract."""
+    """Resolve the exact logical GPU attention projections allowed by the KT variant contract.
+
+    FSDP2 discovers PEFT targets before ``Accelerator.prepare`` moves and shards the model.  During
+    that narrow phase, a base weight may legitimately be staged on CPU.  ``fsdp_staging_device``
+    records its required post-prepare accelerator type in the manifest; callers must still invoke
+    :func:`validate_runtime_attention_placement` before the first forward.  Meta tensors and CPU
+    staging outside this explicit FSDP path remain fail-closed.
+    """
+    if fsdp_staging_device is not None and fsdp_staging_device not in ACCELERATOR_DEVICE_TYPES:
+        raise ValueError(
+            "FSDP attention staging must name an accelerator device type, got "
+            f"{fsdp_staging_device!r}."
+        )
+
     records: list[TargetRecord] = []
     seen_weight_ids: set[int] = set()
     for name, module in model.named_modules():
@@ -332,8 +348,16 @@ def resolve_eligible_gpu_lora_targets(
         if id(weight) in seen_weight_ids:
             raise ValueError(f"Eligible logical attention weight was discovered more than once: {name}.")
         seen_weight_ids.add(id(weight))
-        if require_gpu and weight.device.type not in ["cuda", "xpu", "npu"]:
-            raise ValueError(f"Eligible attention base weight is not on an accelerator: {name} ({weight.device}).")
+        weight_device = weight.device.type
+        if require_gpu and weight_device not in ACCELERATOR_DEVICE_TYPES:
+            if weight_device == "cpu" and fsdp_staging_device is not None:
+                # The persisted manifest describes the device contract that will be checked after
+                # FSDP2 replaces the staged Parameter with its accelerator-backed DTensor.
+                weight_device = fsdp_staging_device
+            else:
+                raise ValueError(
+                    f"Eligible attention base weight is not on an accelerator: {name} ({weight.device})."
+                )
 
         out_features, in_features = (int(dim) for dim in weight.shape)
         records.append(
@@ -345,7 +369,7 @@ def resolve_eligible_gpu_lora_targets(
                 out_features=out_features,
                 weight_shape=(out_features, in_features),
                 weight_dtype=str(weight.dtype).removeprefix("torch."),
-                weight_device=weight.device.type,
+                weight_device=weight_device,
             )
         )
 
@@ -358,6 +382,65 @@ def resolve_eligible_gpu_lora_targets(
             f"Eligible attention target inventory mismatch: expected {required_count}, found {len(records)}."
         )
     return _make_manifest(records, "eligible", required_count)
+
+
+def validate_runtime_attention_placement(
+    model: nn.Module,
+    eligible: TargetManifest,
+    selected: TargetManifest,
+) -> "tuple[LoraPair, ...]":
+    """Validate the manifest and injected PEFT parameters after FSDP/device preparation.
+
+    The manifest uses canonical pre-injection names, while PEFT and FSDP may add wrapper prefixes.
+    Matching therefore accepts only an exact name or a single canonical suffix and still requires
+    one unique logical module for every eligible target.
+    """
+    eligible_names = set(eligible.exact_target_names)
+    if not set(selected.exact_target_names).issubset(eligible_names):
+        raise ValueError("Runtime selected attention targets are outside the eligible manifest.")
+
+    named_modules = tuple(model.named_modules())
+    for record in eligible.records:
+        matches = [
+            (module_name, module)
+            for module_name, module in named_modules
+            if module_name == record.name or module_name.endswith(f".{record.name}")
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Runtime attention target {record.name} resolved {len(matches)} modules; expected exactly one."
+            )
+        module_name, module = matches[0]
+        weight = get_logical_weight(module)
+        if weight is None:
+            raise ValueError(f"Runtime attention target has no unique 2D base weight: {module_name}.")
+        if weight.device.type not in ACCELERATOR_DEVICE_TYPES:
+            raise ValueError(
+                f"Runtime attention base weight is not on an accelerator: {module_name} ({weight.device})."
+            )
+        if tuple(int(dim) for dim in weight.shape) != record.weight_shape:
+            raise ValueError(
+                f"Runtime attention base shape differs at {module_name}: "
+                f"{tuple(weight.shape)} != {record.weight_shape}."
+            )
+        runtime_dtype = str(weight.dtype).removeprefix("torch.")
+        if runtime_dtype != record.weight_dtype or weight.device.type != record.weight_device:
+            raise ValueError(
+                f"Runtime attention dtype/device differs at {module_name}: "
+                f"{runtime_dtype}/{weight.device.type} != {record.weight_dtype}/{record.weight_device}."
+            )
+
+    pairs = resolve_injected_lora_pairs(model, selected)
+    for pair in pairs:
+        for factor_name, parameter in (("A", pair.lora_a), ("B", pair.lora_b)):
+            if parameter.device.type not in ACCELERATOR_DEVICE_TYPES:
+                raise ValueError(
+                    f"Runtime attention LoRA {factor_name} is not on an accelerator: "
+                    f"{pair.name} ({parameter.device})."
+                )
+            if not parameter.requires_grad:
+                raise ValueError(f"Runtime attention LoRA {pair.name}.{factor_name} is unexpectedly frozen.")
+    return pairs
 
 
 def select_target_manifest(
@@ -602,3 +685,19 @@ def rebuild_adamw_param_groups(optimizer: torch.optim.Optimizer, pairs: tuple[Lo
     if expected_ids != actual_ids:
         raise ValueError("Variant optimizer parameter ownership differs from the baseline optimizer.")
     return rebuilt
+
+
+def adamw_constructor_kwargs(optimizer: torch.optim.Optimizer) -> dict[str, Any]:
+    """Return only public AdamW constructor defaults supported by the installed torch version.
+
+    Newer torch releases keep internal optimizer flags (for example
+    ``decoupled_weight_decay`` in torch 2.9) inside ``Optimizer.defaults`` even though
+    ``AdamW.__init__`` does not accept them as keyword arguments.  The complete flags remain
+    preserved in the rebuilt parameter groups; this filter is only for constructing AdamW.
+    """
+    parameters = inspect.signature(torch.optim.AdamW.__init__).parameters
+    return {
+        key: value
+        for key, value in optimizer.defaults.items()
+        if key in parameters and key not in ("self", "params")
+    }

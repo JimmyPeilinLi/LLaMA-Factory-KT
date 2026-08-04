@@ -23,6 +23,7 @@ from typing import Any
 
 import torch
 from accelerate import Accelerator, DataLoaderConfiguration
+from kt_kernel.sft import get_kt_lora_params, kt_adapt_peft_lora
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Subset
 
@@ -78,6 +79,38 @@ def _git_commit() -> str:
 
 
 def _probe_data_hash(dataset, indices: list[int]) -> str:
+    def update_value(value: Any) -> None:
+        if value is None:
+            digest.update(b"none\0")
+            return
+        if isinstance(value, str):
+            encoded = value.encode("utf-8")
+            digest.update(f"str:{len(encoded)}:".encode("ascii"))
+            digest.update(encoded)
+            return
+        if isinstance(value, (bool, int, float)):
+            digest.update(f"{type(value).__name__}:{value!r}\0".encode("ascii"))
+            return
+        if isinstance(value, dict):
+            digest.update(f"dict:{len(value)}:".encode("ascii"))
+            for nested_key in sorted(value):
+                update_value(str(nested_key))
+                update_value(value[nested_key])
+            return
+
+        try:
+            tensor = torch.as_tensor(value).detach().cpu().contiguous()
+        except (TypeError, ValueError, RuntimeError) as error:
+            if not isinstance(value, (list, tuple)):
+                raise TypeError(f"Unsupported PLoP probe-data value type: {type(value).__name__}.") from error
+            digest.update(f"sequence:{len(value)}:".encode("ascii"))
+            for item in value:
+                update_value(item)
+            return
+
+        digest.update(f"tensor:{tensor.dtype}:{tuple(tensor.shape)}:".encode("ascii"))
+        digest.update(tensor.view(torch.uint8).numpy().tobytes())
+
     digest = hashlib.sha256()
     for index in indices:
         example = dataset[index]
@@ -85,10 +118,7 @@ def _probe_data_hash(dataset, indices: list[int]) -> str:
         for key in sorted(example):
             value = example[key]
             digest.update(key.encode("utf-8"))
-            if isinstance(value, str):
-                digest.update(value.encode("utf-8"))
-            else:
-                digest.update(torch.as_tensor(value).contiguous().view(torch.uint8).numpy().tobytes())
+            update_value(value)
     return digest.hexdigest()
 
 
@@ -122,6 +152,7 @@ def main() -> None:
     probe_count = min(cli_args.probe_examples, len(train_dataset))
     probe_indices = list(range(probe_count))
     probe_dataset = Subset(train_dataset, probe_indices)
+    probe_data_sha256 = _probe_data_hash(train_dataset, probe_indices)
 
     model = load_model(tokenizer, model_args, finetuning_args, is_trainable=False)
     data_collator = SFTDataCollatorWith4DAttentionMask(
@@ -143,9 +174,25 @@ def main() -> None:
         num_workers=0,
     )
     accelerator = Accelerator(dataloader_config=DataLoaderConfiguration(even_batches=False))
-    model, dataloader = accelerator.prepare(model, dataloader)
+    # Accelerate's FSDP2 preparation contract requires an optimizer so it can replace pre-shard parameter
+    # identities with their DTensor counterparts. The planner never calls backward/step, so one frozen model
+    # parameter is sufficient as a zero-learning-rate ownership anchor and creates no optimizer state.
+    optimizer_anchor = next(model.parameters(), None)
+    if optimizer_anchor is None:
+        raise RuntimeError("PLoP-Attn probe model unexpectedly has no parameters.")
+
+    ownership_optimizer = torch.optim.SGD([optimizer_anchor], lr=0.0)
+    model, ownership_optimizer, dataloader = accelerator.prepare(model, ownership_optimizer, dataloader)
     model.eval()
     unwrapped_model = accelerator.unwrap_model(model)
+    # KT 0.6.4 initializes fused expert-LoRA buffers after FSDP2 has replaced model parameters (the same
+    # ordering used by Transformers Trainer). B starts at zero, so this keeps the frozen probe numerically
+    # equal to the base expert path; freezing the auxiliary buffers and running under no_grad guarantees that
+    # the planning pass cannot train them or create optimizer state.
+    kt_adapt_peft_lora(unwrapped_model)
+    for parameter in get_kt_lora_params(unwrapped_model):
+        parameter.requires_grad_(False)
+
     fused_wrapper_count = verify_kt_fused_expert_lora_contract(
         unwrapped_model, expected_rank=finetuning_args.lora_rank
     )
@@ -160,7 +207,8 @@ def main() -> None:
             attention_mask = batch.get("attention_mask")
             model_inputs = {key: value for key, value in batch.items() if key != "labels"}
             with scorer.batch(batch_index, attention_mask):
-                model(**model_inputs)
+                with torch.no_grad():
+                    model(**model_inputs)
         scores = scorer.finalize()
     finally:
         scorer.close()
@@ -186,7 +234,7 @@ def main() -> None:
         "cutoff_len": data_args.cutoff_len,
         "probe_examples": probe_count,
         "probe_indices_sha256": probe_indices_sha256,
-        "probe_data_sha256": _probe_data_hash(train_dataset, probe_indices),
+        "probe_data_sha256": probe_data_sha256,
         "probe_seed": cli_args.probe_seed,
         "num_random_draws": 1,
         "lora_rank": finetuning_args.lora_rank,

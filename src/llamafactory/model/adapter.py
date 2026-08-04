@@ -18,8 +18,10 @@ from typing import TYPE_CHECKING
 import torch
 from peft import LoraConfig, LoraModel, OFTConfig, PeftModel, TaskType, get_peft_model
 from transformers.integrations import is_deepspeed_zero3_enabled
+from transformers.modeling_utils import is_fsdp_enabled
 
 from ..extras import logging
+from ..extras.misc import get_current_device
 from .lora_variants.bilora_attn import register_bilora_eval_hooks
 from .lora_variants.common import (
     KTLoraVariantConfig,
@@ -197,7 +199,15 @@ def _resolve_variant_manifests(
     adapter_variant_config: KTLoraVariantConfig | None,
 ) -> tuple[TargetManifest, TargetManifest, tuple[str, ...], int]:
     fused_wrapper_count = verify_kt_fused_expert_lora_contract(model, expected_rank=finetuning_args.lora_rank)
-    eligible = resolve_eligible_gpu_lora_targets(model, require_gpu=True)
+    # FSDP2 performs target discovery before ``Accelerator.prepare``.  Keep the persisted manifest
+    # accelerator-canonical while allowing only that explicit CPU staging phase; the trainer verifies
+    # the real base and PEFT parameter devices again before its first forward.
+    fsdp_staging_device = get_current_device().type if is_fsdp_enabled() else None
+    eligible = resolve_eligible_gpu_lora_targets(
+        model,
+        require_gpu=True,
+        fsdp_staging_device=fsdp_staging_device,
+    )
     if adapter_variant_config is not None:
         source_hash = adapter_variant_config.method.get("ktransformers_python_source_sha256")
         if source_hash != python_package_source_sha256("ktransformers"):

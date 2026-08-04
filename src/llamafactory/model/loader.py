@@ -218,14 +218,17 @@ def load_model(
             model.load_state_dict(vhead_params, strict=False)
             logger.info_rank0(f"Loaded valuehead from checkpoint: {vhead_path}")
 
-    # Torch 2.9 Conv3D is prohibitively slow when trainable. Frozen vision towers are allowed for text-only SFT.
-    _check_torch29_conv3d_compatibility(model)
-
     if not is_trainable:
+        # Inference-only callers (including the PLoP probe planner) do not pass through the training adapter's
+        # component-freezing path. Freeze the complete model before checking Conv3D compatibility so the guard
+        # evaluates the runtime state that will actually be used rather than the from_pretrained defaults.
         model.requires_grad_(False)
         model.eval()
     else:
         model.train()
+
+    # Torch 2.9 Conv3D is prohibitively slow when trainable. Frozen vision towers are allowed for text-only SFT.
+    _check_torch29_conv3d_compatibility(model)
 
     # Borrowing the kernel plugins ability of v1 to temporarily apply the NPU fusion operator to v0,
     # it is turned off by default, and can be discarded after the transition period ends.

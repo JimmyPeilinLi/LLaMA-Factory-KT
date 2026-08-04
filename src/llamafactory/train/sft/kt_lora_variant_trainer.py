@@ -19,7 +19,11 @@ from typing_extensions import override
 
 from ...model.lora_variants.altlora_attn import AltLoraAttnOptimizer
 from ...model.lora_variants.bilora_attn import BiLoraAttnOptimizer, export_bilora_primary_adapter
-from ...model.lora_variants.common import get_variant_config, save_variant_artifacts
+from ...model.lora_variants.common import (
+    get_variant_config,
+    save_variant_artifacts,
+    validate_runtime_attention_placement,
+)
 from .trainer import CustomSeq2SeqTrainer
 
 
@@ -40,6 +44,56 @@ class KTLoraVariantTrainer(CustomSeq2SeqTrainer):
         optimizer = self._variant_optimizer()
         if isinstance(optimizer, AltLoraAttnOptimizer):
             optimizer.discard_inactive_gradients()
+
+    def _verify_runtime_attention_contract(self, model: torch.nn.Module) -> None:
+        if getattr(model, "_kt_lora_runtime_contract_verified", False):
+            return
+        eligible = getattr(model, "_kt_lora_eligible_manifest", None)
+        selected = getattr(model, "_kt_lora_selected_manifest", None)
+        if eligible is None or selected is None:
+            raise RuntimeError("KT LoRA variant manifests are unavailable after accelerator preparation.")
+
+        runtime_pairs = validate_runtime_attention_placement(model, eligible, selected)
+        variant_optimizer = self._variant_optimizer()
+        if variant_optimizer is not None:
+            pair_groups = {
+                group.get("pair_name"): group
+                for group in variant_optimizer.param_groups
+                if group.get("variant_role") == "attention_pair"
+            }
+            if set(pair_groups) != {pair.name for pair in runtime_pairs}:
+                raise RuntimeError("KT LoRA variant optimizer attention groups differ from the runtime target pairs.")
+            for pair in runtime_pairs:
+                parameters = pair_groups[pair.name]["params"]
+                if len(parameters) != 2 or parameters[0] is not pair.lora_a or parameters[1] is not pair.lora_b:
+                    raise RuntimeError(
+                        f"KT LoRA variant optimizer owns stale FSDP parameters for {pair.name}."
+                    )
+        else:
+            optimizer = self.optimizer
+            visited = set()
+            while getattr(optimizer, "optimizer", None) is not None and id(optimizer) not in visited:
+                visited.add(id(optimizer))
+                optimizer = optimizer.optimizer
+            optimizer_parameter_ids = {
+                id(parameter) for group in optimizer.param_groups for parameter in group["params"]
+            }
+            missing = [
+                pair.name
+                for pair in runtime_pairs
+                if id(pair.lora_a) not in optimizer_parameter_ids or id(pair.lora_b) not in optimizer_parameter_ids
+            ]
+            if missing:
+                raise RuntimeError(f"PLoP-Attn optimizer does not own runtime PEFT parameters: {missing[:5]}.")
+
+        # Replace the pre-FSDP references so later eval hooks and diagnostics observe the live DTensors.
+        setattr(model, "_kt_lora_variant_pairs", runtime_pairs)
+        setattr(model, "_kt_lora_runtime_contract_verified", True)
+
+    @override
+    def training_step(self, model, inputs, *args, **kwargs):
+        self._verify_runtime_attention_contract(model)
+        return super().training_step(model, inputs, *args, **kwargs)
 
     @override
     def _clip_grad_norm(self, model):

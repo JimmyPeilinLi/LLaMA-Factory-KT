@@ -16,7 +16,13 @@ from typing import Any
 
 import torch
 
-from .common import LoraPair, copy_full_to_tensor, rebuild_adamw_param_groups, tensor_to_full
+from .common import (
+    LoraPair,
+    adamw_constructor_kwargs,
+    copy_full_to_tensor,
+    rebuild_adamw_param_groups,
+    tensor_to_full,
+)
 
 
 class AltLoraAttnOptimizer(torch.optim.AdamW):
@@ -50,7 +56,7 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
         if baseline_optimizer.state:
             raise ValueError("AltLoRA-Attn must replace AdamW before the baseline optimizer has taken a step.")
         param_groups = rebuild_adamw_param_groups(baseline_optimizer, pairs)
-        super().__init__(param_groups, **baseline_optimizer.defaults)
+        super().__init__(param_groups, **adamw_constructor_kwargs(baseline_optimizer))
         self.regularizer = float(regularizer)
         self.beta1 = float(beta1)
         self.switch_every = int(switch_every)
@@ -157,6 +163,9 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
         weight_decay = float(group["weight_decay"])
         parameter_full.add_(updated_momentum + weight_decay * parameter_full, alpha=-learning_rate)
         copy_full_to_tensor(parameter, parameter_full)
+        # AdamW.__setstate__ in torch 2.9 requires every non-empty per-parameter state to carry
+        # its conventional scalar step, even though this factor uses the AltLoRA update above.
+        state["step"] = torch.tensor(float(self.variant_step + 1), dtype=torch.float32)
         state["alt_momentum"] = updated_momentum
         state["alt_opposite_basis"] = opposite.clone()
 

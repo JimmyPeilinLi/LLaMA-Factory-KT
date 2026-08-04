@@ -28,6 +28,7 @@ from .common import (
     KT_LORA_VARIANT_CONFIG_NAME,
     KTLoraVariantConfig,
     LoraPair,
+    adamw_constructor_kwargs,
     copy_full_to_tensor,
     rebuild_adamw_param_groups,
     tensor_to_full,
@@ -72,7 +73,7 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
                 )
 
         param_groups = rebuild_adamw_param_groups(baseline_optimizer, pairs)
-        super().__init__(param_groups, **baseline_optimizer.defaults)
+        super().__init__(param_groups, **adamw_constructor_kwargs(baseline_optimizer))
         self.primary_rank = int(primary_rank)
         self.auxiliary_rank = int(auxiliary_rank)
         self.rho = float(rho)
@@ -116,6 +117,9 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
         parameter.addcdiv_(exp_avg, denominator, value=-step_size)
 
         state["bilora_step"] = step
+        # Preserve the base AdamW serialization invariant for torch 2.9 while keeping the
+        # Bi-LoRA-specific integer counter authoritative for the sliced primary update.
+        state["step"] = torch.tensor(float(step), dtype=torch.float32)
         state["bilora_exp_avg"] = exp_avg
         state["bilora_exp_avg_sq"] = exp_avg_sq
 

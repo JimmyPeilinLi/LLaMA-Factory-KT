@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import json
 from types import SimpleNamespace
 
@@ -118,6 +119,19 @@ def test_exact_attention_inventory_and_selection_contract():
     with pytest.raises(ValueError, match="not on an accelerator"):
         resolve_eligible_gpu_lora_targets(model, require_gpu=True)
 
+    staged = resolve_eligible_gpu_lora_targets(
+        model,
+        require_gpu=True,
+        fsdp_staging_device="cuda",
+    )
+    assert all(record.weight_device == "cuda" for record in staged.records)
+    with pytest.raises(ValueError, match="must name an accelerator"):
+        resolve_eligible_gpu_lora_targets(
+            model,
+            require_gpu=True,
+            fsdp_staging_device="cpu",
+        )
+
 
 def test_attention_resolver_rejects_fused_wrapper_duplicates():
     model = ToyAttentionModel()
@@ -193,7 +207,9 @@ def test_altlora_optimizer_resume_preserves_parity_and_momentum():
     for step in range(3):
         assign_gradients(continuous_pair, continuous_parameter, step)
         continuous.step()
-    checkpoint = continuous.state_dict()
+    # Match a real save/load boundary: torch optimizer state_dict tensors otherwise share
+    # storage with the live optimizer and are mutated by the continuous reference run.
+    checkpoint = copy.deepcopy(continuous.state_dict())
 
     _, resumed_pair = make_pair()
     resumed_parameter = nn.Parameter(continuous_parameter.detach().clone())
@@ -249,6 +265,27 @@ def test_bilora_rank_slices_ascent_projection_and_baseline_parameter():
     optimizer.step()
     perturbation_norm = torch.linalg.matrix_norm(pair.lora_b[:, 1:] @ pair.lora_a[1:], ord="fro")
     torch.testing.assert_close(perturbation_norm, torch.tensor(optimizer.rho), atol=1.0e-6, rtol=0)
+
+    checkpoint = optimizer.state_dict()
+    _, resumed_pair = make_pair()
+    resumed_parameter = nn.Parameter(baseline_parameter.detach().clone())
+    with torch.no_grad():
+        resumed_pair.lora_a.copy_(pair.lora_a)
+        resumed_pair.lora_b.copy_(pair.lora_b)
+    resumed_baseline = torch.optim.AdamW(
+        [resumed_pair.lora_a, resumed_pair.lora_b, resumed_parameter], lr=0.1, weight_decay=0.0
+    )
+    resumed = BiLoraAttnOptimizer(
+        resumed_baseline,
+        (resumed_pair,),
+        primary_rank=1,
+        auxiliary_rank=1,
+        rho=optimizer.rho,
+        auxiliary_lr_ratio=1.0,
+    )
+    resumed.load_state_dict(checkpoint)
+    assert resumed.variant_step == optimizer.variant_step
+    assert all(torch.is_tensor(state["step"]) for state in resumed.state.values() if state)
 
 
 def test_bilora_eval_hook_removes_only_auxiliary_branch():
