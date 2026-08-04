@@ -25,6 +25,7 @@ from ...extras.packages import is_transformers_version_greater_than
 from ...extras.ploting import plot_loss
 from ...model import load_model, load_tokenizer
 from ..trainer_utils import create_modelcard_and_push, create_ref_model
+from .kt_lora_variant_trainer import KTLoraVariantTrainer
 from .metric import ComputeAccuracy, ComputeSimilarity, eval_logit_processor
 from .trainer import CustomSeq2SeqTrainer
 
@@ -103,7 +104,8 @@ def run_sft(
     gen_kwargs["pad_token_id"] = tokenizer.pad_token_id
 
     # Initialize our Trainer
-    trainer = CustomSeq2SeqTrainer(
+    trainer_class = KTLoraVariantTrainer if finetuning_args.kt_lora_variant != "vanilla" else CustomSeq2SeqTrainer
+    trainer = trainer_class(
         model=model,
         args=training_args,
         finetuning_args=finetuning_args,

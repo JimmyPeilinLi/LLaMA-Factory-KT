@@ -140,6 +140,23 @@ def _fp32_forward_post_hook(
     return output.to(torch.float32)
 
 
+def _configure_use_reentrant_gc(model_args: "ModelArguments") -> None:
+    r"""Select the checkpoint implementation required by distributed and KT runtimes."""
+    using_fsdp2 = (
+        os.environ.get("ACCELERATE_USE_FSDP", "false").lower() == "true"
+        and int(os.environ.get("FSDP_VERSION", "1")) == 2
+    )
+    if using_fsdp2:
+        model_args.use_reentrant_gc = False
+        logger.warning_rank0("You are using fsdp2, `use_reentrant_gc` has been set to False.")
+    elif getattr(model_args, "use_kt", False) and model_args.use_reentrant_gc:
+        model_args.use_reentrant_gc = False
+        logger.warning_rank0(
+            "KTransformers requires non-reentrant gradient checkpointing so its fused MoE forward cache "
+            "is rebuilt before backward; `use_reentrant_gc` has been set to False."
+        )
+
+
 def prepare_model_for_training(model: "PreTrainedModel", model_args: "ModelArguments") -> None:
     r"""Prepare the model before training.
 
@@ -154,12 +171,7 @@ def prepare_model_for_training(model: "PreTrainedModel", model_args: "ModelArgum
             if param.ndim == 1 and any(ln_name in name for ln_name in LAYERNORM_NAMES):
                 param.data = param.data.to(torch.float32)
 
-    if (
-        os.environ.get("ACCELERATE_USE_FSDP", "false").lower() == "true"
-        and int(os.environ.get("FSDP_VERSION", "1")) == 2
-    ):
-        model_args.use_reentrant_gc = False
-        logger.warning_rank0("You are using fsdp2, `use_reentrant_gc` has been set to False.")
+    _configure_use_reentrant_gc(model_args)
 
     if not model_args.disable_gradient_checkpointing:
         if not getattr(model, "supports_gradient_checkpointing", False):

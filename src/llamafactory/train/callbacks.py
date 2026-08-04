@@ -35,6 +35,7 @@ from ..extras import logging
 from ..extras.constants import TRAINER_LOG, V_HEAD_SAFE_WEIGHTS_NAME, V_HEAD_WEIGHTS_NAME
 from ..extras.misc import get_peak_memory, is_env_enabled, is_torch_cuda_available, is_torch_npu_available, use_ray
 from ..extras.packages import is_safetensors_available
+from ..model.model_utils.lora_expert import get_lora_expert_config, save_lora_expert_config
 
 
 if is_safetensors_available():
@@ -95,6 +96,35 @@ def fix_valuehead_checkpoint(
         torch.save(v_head_state_dict, os.path.join(output_dir, V_HEAD_WEIGHTS_NAME))
 
     logger.info_rank0(f"Value head model saved at: {output_dir}")
+
+
+class SaveLoRAExpertConfigCallback(TrainerCallback):
+    r"""Save independent LoRA Expert reconstruction metadata beside every PEFT adapter checkpoint."""
+
+    def _save_config(
+        self,
+        args: "TrainingArguments",
+        model: torch.nn.Module | None,
+        output_dir: str,
+    ) -> None:
+        if not args.should_save:
+            return
+
+        config = get_lora_expert_config(model)
+        if config is None:
+            return
+
+        save_lora_expert_config(config, output_dir)
+        logger.info_rank0(f"LoRA Expert metadata saved at: {output_dir}")
+
+    @override
+    def on_save(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        output_dir = os.path.join(args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}")
+        self._save_config(args, kwargs.get("model"), output_dir)
+
+    @override
+    def on_train_end(self, args: "TrainingArguments", state: "TrainerState", control: "TrainerControl", **kwargs):
+        self._save_config(args, kwargs.get("model"), args.output_dir)
 
 
 class FixValueHeadModelCallback(TrainerCallback):

@@ -88,6 +88,75 @@ class LoraArguments:
             )
         },
     )
+    use_lora_expert: bool = field(
+        default=False,
+        metadata={"help": "Whether to add LLaMA-Factory-owned GPU LoRA Experts after each MoE block."},
+    )
+    lora_expert_num: int = field(
+        default=2,
+        metadata={"help": "Number of un-routed SwiGLU LoRA Experts evaluated for every token."},
+    )
+    lora_expert_intermediate_size: int = field(
+        default=1024,
+        metadata={"help": "Intermediate width of each SwiGLU LoRA Expert."},
+    )
+    kt_lora_variant: Literal["vanilla", "altlora_attn", "plop_attn", "bilora_attn"] = field(
+        default="vanilla",
+        metadata={
+            "help": (
+                "KT-compatible attention LoRA variant. The non-vanilla choices are intentionally "
+                "mutually exclusive and only target eligible GPU attention projections."
+            )
+        },
+    )
+    altlora_reg: float = field(
+        default=1.0e-5,
+        metadata={"help": "Tikhonov regularizer for AltLoRA-Attn rank-space solves."},
+    )
+    altlora_beta1: float = field(
+        default=0.9,
+        metadata={"help": "First-moment coefficient for ordinary AltLoRA-Attn."},
+    )
+    altlora_first_factor: Literal["B"] = field(
+        default="B",
+        metadata={"help": "First AltLoRA-Attn factor to update. The audited implementation is B-first only."},
+    )
+    altlora_switch_every_optimizer_steps: int = field(
+        default=1,
+        metadata={"help": "Number of complete optimizer steps before AltLoRA-Attn switches A/B factor."},
+    )
+    plop_attn_target_manifest_path: str | None = field(
+        default=None,
+        metadata={"help": "Frozen PLoP-Attn exact-target artifact used by the final training phase."},
+    )
+    plop_attn_score_manifest_path: str | None = field(
+        default=None,
+        metadata={"help": "Optional frozen PLoP-Attn NFN score artifact used for cross-artifact validation."},
+    )
+    plop_attn_select_k: int = field(
+        default=3,
+        metadata={"help": "Number of lowest-NFN GPU attention projection families selected by PLoP-Attn."},
+    )
+    bilora_primary_rank: int = field(
+        default=8,
+        metadata={"help": "Primary (deployable) rank for Bi-LoRA-Attn."},
+    )
+    bilora_aux_rank: int = field(
+        default=8,
+        metadata={"help": "Auxiliary adversarial rank for Bi-LoRA-Attn."},
+    )
+    bilora_rho: float = field(
+        default=0.05,
+        metadata={"help": "Global Frobenius-norm radius for the Bi-LoRA-Attn auxiliary perturbation."},
+    )
+    bilora_aux_lr_ratio: float = field(
+        default=1.0,
+        metadata={"help": "Bi-LoRA-Attn auxiliary SGD-ascent learning rate divided by primary learning rate."},
+    )
+    bilora_rho_warmup: bool = field(
+        default=False,
+        metadata={"help": "Whether to warm up Bi-LoRA-Attn rho. Disabled in the audited first version."},
+    )
     loraplus_lr_ratio: float | None = field(
         default=None,
         metadata={"help": "LoRA plus learning rate ratio (lr_B / lr_A)."},
@@ -596,6 +665,62 @@ class FinetuningArguments(
         assert self.ref_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.reward_model_quantization_bit in [None, 8, 4], "We only accept 4-bit or 8-bit quantization."
         assert self.hyper_parallel_cp_size > 0, "`hyper_parallel_cp_size` must be greater than 0."
+
+        if self.use_lora_expert and self.finetuning_type != "lora":
+            raise ValueError("`use_lora_expert` is only valid for LoRA training.")
+
+        if self.use_lora_expert and self.lora_expert_num <= 0:
+            raise ValueError("`lora_expert_num` must be greater than 0.")
+
+        if self.use_lora_expert and self.lora_expert_intermediate_size <= 0:
+            raise ValueError("`lora_expert_intermediate_size` must be greater than 0.")
+
+        if self.kt_lora_variant != "vanilla":
+            if self.finetuning_type != "lora" or self.stage != "sft":
+                raise ValueError("KT LoRA variants are only supported for LoRA SFT in the audited first version.")
+            if self.lora_target != ["kt_attention"]:
+                raise ValueError(
+                    "KT LoRA variants require `lora_target: kt_attention`; exact eligible module names are resolved "
+                    "and verified by LLaMA-Factory instead of PEFT suffix expansion."
+                )
+            if self.additional_target:
+                raise ValueError("KT LoRA variants do not allow `additional_target` trainables.")
+            if self.use_dora or self.use_rslora or self.pissa_init or self.loraplus_lr_ratio is not None:
+                raise ValueError("KT LoRA variants cannot be combined with DoRA, rsLoRA, PiSSA, or LoRA+.")
+            if self.use_galore or self.use_apollo or self.use_badam or self.use_adam_mini or self.use_muon:
+                raise ValueError("KT LoRA variants cannot be combined with another custom optimizer.")
+            if self.use_mca or self.use_megatron_bridge or self.use_hyper_parallel:
+                raise ValueError("KT LoRA variants require the standard LLaMA-Factory SFT trainer path.")
+            if self.lora_rank != 8 or self.lora_alpha != 16 or abs(self.lora_dropout - 0.1) > 1.0e-12:
+                raise ValueError(
+                    "The audited first version fixes the base LoRA contract to rank=8, alpha=16, dropout=0.1."
+                )
+
+        if self.kt_lora_variant == "altlora_attn":
+            if self.altlora_reg <= 0:
+                raise ValueError("`altlora_reg` must be greater than 0.")
+            if not 0 <= self.altlora_beta1 < 1:
+                raise ValueError("`altlora_beta1` must be in [0, 1).")
+            if self.altlora_first_factor != "B":
+                raise ValueError("The audited AltLoRA-Attn implementation is B-first only.")
+            if self.altlora_switch_every_optimizer_steps <= 0:
+                raise ValueError("`altlora_switch_every_optimizer_steps` must be greater than 0.")
+
+        if self.kt_lora_variant == "plop_attn":
+            if self.plop_attn_target_manifest_path is None:
+                raise ValueError("`plop_attn_target_manifest_path` is required for PLoP-Attn final training.")
+            if self.plop_attn_select_k not in [2, 3, 4, 5]:
+                raise ValueError("`plop_attn_select_k` must be one of 2, 3, 4, or 5.")
+
+        if self.kt_lora_variant == "bilora_attn":
+            if self.bilora_primary_rank != self.lora_rank:
+                raise ValueError("`bilora_primary_rank` must equal the rank-8 KT fused expert-LoRA baseline.")
+            if self.bilora_primary_rank <= 0 or self.bilora_aux_rank <= 0:
+                raise ValueError("Bi-LoRA-Attn primary and auxiliary ranks must be greater than 0.")
+            if self.bilora_rho <= 0 or self.bilora_aux_lr_ratio <= 0:
+                raise ValueError("Bi-LoRA-Attn rho and auxiliary learning-rate ratio must be greater than 0.")
+            if self.bilora_rho_warmup:
+                raise ValueError("`bilora_rho_warmup` is disabled in the audited first version.")
 
         if self.stage == "ppo" and self.reward_model is None:
             raise ValueError("`reward_model` is necessary for PPO training.")

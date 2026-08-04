@@ -200,6 +200,9 @@ def _verify_model_args(
     data_args: "DataArguments",
     finetuning_args: "FinetuningArguments",
 ) -> None:
+    if finetuning_args.kt_lora_variant != "vanilla" and not model_args.use_kt:
+        raise ValueError("`kt_lora_variant` requires `use_kt: true` in the audited first version.")
+
     if model_args.adapter_name_or_path is not None and finetuning_args.finetuning_type != "lora":
         raise ValueError("Adapter is only valid for the LoRA method.")
 
@@ -497,6 +500,11 @@ def get_train_args(args: dict[str, Any] | list[str] | None = None) -> _TRAIN_CLS
 
     if model_args.use_kt and is_deepspeed_zero3_enabled():
         raise ValueError("KTransformers is incompatible with DeepSpeed ZeRO-3.")
+
+    if finetuning_args.kt_lora_variant != "vanilla":
+        optimizer_name = getattr(training_args.optim, "value", str(training_args.optim))
+        if optimizer_name != "adamw_torch":
+            raise ValueError("KT LoRA variants require `optim: adamw_torch`.")
 
     _set_env_vars()
     _verify_model_args(model_args, data_args, finetuning_args)

@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import os
+from types import SimpleNamespace
 
 import pytest
 import torch
 
 from llamafactory.extras.misc import get_current_device
+from llamafactory.model.model_utils.checkpointing import _configure_use_reentrant_gc
 from llamafactory.train.test_utils import load_train_model
 
 
@@ -44,6 +46,13 @@ def test_vanilla_checkpointing(disable_gradient_checkpointing: bool):
     model = load_train_model(disable_gradient_checkpointing=disable_gradient_checkpointing, **TRAIN_ARGS)
     for module in filter(lambda m: hasattr(m, "gradient_checkpointing"), model.modules()):
         assert getattr(module, "gradient_checkpointing") != disable_gradient_checkpointing
+
+
+def test_kt_uses_non_reentrant_gradient_checkpointing(monkeypatch):
+    monkeypatch.delenv("ACCELERATE_USE_FSDP", raising=False)
+    model_args = SimpleNamespace(use_kt=True, use_reentrant_gc=True)
+    _configure_use_reentrant_gc(model_args)
+    assert model_args.use_reentrant_gc is False
 
 
 def test_unsloth_gradient_checkpointing():
