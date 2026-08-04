@@ -20,7 +20,21 @@ from .common import LoraPair, copy_full_to_tensor, rebuild_adamw_param_groups, t
 
 
 class AltLoraAttnOptimizer(torch.optim.AdamW):
-    r"""Ordinary AltLoRA on audited GPU attention pairs, with a B-first alternating schedule."""
+    r"""Ordinary AltLoRA on audited GPU attention pairs, with a B-first alternating schedule.
+
+    Contributor map from the paper notation to this implementation:
+
+    - ``group["params"] == [A, B]`` with ``A: [r, in]`` and ``B: [out, r]``.  PEFT evaluates
+      ``W_0 x + s B A x``, and ``group["lora_scaling"]`` is the scalar ``s``.
+    - ``_update_attention_pair`` is the formula-local part of the optimizer.  A new alternating
+      low-rank rule should be expressed there using full FP32 rank-space tensors, then copied back
+      with ``copy_full_to_tensor`` so DTensor/FSDP ownership is preserved.
+    - Per-factor mathematical state belongs in ``self.state[parameter]``.  Global schedule state
+      belongs in the explicit metadata added by ``state_dict``/``load_state_dict``.
+    - ``step`` deliberately separates the audited attention A/B update from ``super().step()``.
+      Any future rule must leave baseline parameters (KT fused expert-LoRA and optional LoRA Expert)
+      on the original AdamW path.
+    """
 
     _STATE_KEY = "kt_altlora_attn"
 
@@ -78,6 +92,8 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
 
     @torch.no_grad()
     def _update_attention_pair(self, group: dict[str, Any], active_factor: str) -> None:
+        # Keep the paper's orientation throughout: Delta W = s * B @ A.  Converting to full FP32
+        # here makes the small r x r solves explicit and keeps low-precision storage out of them.
         lora_a, lora_b = group["params"]
         a = self._full_fp32(lora_a)
         b = self._full_fp32(lora_b)
@@ -86,6 +102,7 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
         identity = torch.eye(rank, dtype=torch.float32, device=a.device)
 
         if active_factor == "A":
+            # G_A_tilde = (B^T B + delta I)^(-1) G_A / s^2.
             if lora_a.grad is None:
                 raise RuntimeError(f"AltLoRA-Attn received a missing A gradient for {group['pair_name']}.")
             grad_a = self._full_fp32(lora_a.grad)
@@ -102,6 +119,7 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
             elif torch.equal(previous_opposite.to(device=b.device, dtype=b.dtype), b):
                 aligned_momentum = momentum.to(device=b.device, dtype=b.dtype)
             else:
+                # Re-express the saved first moment in the current B basis before momentum mixing.
                 aligned_momentum = self._solve(
                     gram,
                     b.mT @ previous_opposite.to(device=b.device, dtype=b.dtype) @ momentum.to(b.device),
@@ -109,6 +127,7 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
                     "A-momentum",
                 )
         else:
+            # G_B_tilde = G_B (A A^T + delta I)^(-1) / s^2.
             if lora_b.grad is None:
                 raise RuntimeError(f"AltLoRA-Attn received a missing B gradient for {group['pair_name']}.")
             grad_b = self._full_fp32(lora_b.grad)
@@ -125,6 +144,7 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
             elif torch.equal(previous_opposite.to(device=a.device, dtype=a.dtype), a):
                 aligned_momentum = momentum.to(device=a.device, dtype=a.dtype)
             else:
+                # This is the right-solving analogue of the A-factor basis alignment above.
                 aligned_momentum = self._right_solve(
                     momentum.to(a.device) @ previous_opposite.to(device=a.device, dtype=a.dtype) @ a.mT,
                     gram,
@@ -145,6 +165,8 @@ class AltLoraAttnOptimizer(torch.optim.AdamW):
         if closure is not None:
             raise ValueError("AltLoRA-Attn does not support optimizer closures.")
 
+        # Hide only audited attention gradients while the inherited AdamW updates every baseline-owned
+        # parameter.  Restoring them afterwards lets the paper-specific update consume the same gradients.
         attention_grads: list[tuple[torch.Tensor, torch.Tensor | None]] = []
         for group in self.param_groups:
             if group.get("variant_role") != "attention_pair":

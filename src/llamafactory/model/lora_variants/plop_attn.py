@@ -60,6 +60,8 @@ def compute_nfn_per_token(
     *,
     epsilon: float = 1.0e-8,
 ) -> torch.Tensor:
+    # PyTorch batches row vectors, so W z from the paper is written as z @ W.T here.  Keep this
+    # function free of aggregation policy: it should map one mathematical score to one valid token.
     if weight.ndim != 2 or hidden_states.ndim != 2 or random_hidden_states.shape != hidden_states.shape:
         raise ValueError("PLoP-Attn NFN expects a 2D weight and equally-shaped 2D real/random inputs.")
     if hidden_states.shape[1] != weight.shape[1]:
@@ -70,7 +72,19 @@ def compute_nfn_per_token(
 
 
 class PLoPAttnScorer:
-    r"""Forward-only deterministic NFN scorer restricted to an already-audited attention inventory."""
+    r"""Forward-only deterministic NFN scorer restricted to an already-audited attention inventory.
+
+    Guidance for adding another placement/scoring algorithm:
+
+    - Candidate discovery is intentionally outside this class.  Consume a ``TargetManifest`` instead
+      of scanning ``named_modules`` again, so a new score cannot silently include MLP or expert paths.
+    - Put the per-token mathematical statistic in a small pure helper such as
+      ``compute_nfn_per_token``.  The hook should only obtain ``z`` and the logical frozen ``W``.
+    - Preserve the reduction hierarchy: valid tokens -> examples -> probe batches/modules -> families.
+      Do not replace it with one global token-weighted mean unless the new method defines that formula.
+    - Placement is a two-phase contract.  Scoring emits hashed exact-name artifacts; final training
+      reloads those artifacts in a fresh process.  A future method should not mutate PEFT targets online.
+    """
 
     def __init__(
         self,
@@ -146,6 +160,8 @@ class PLoPAttnScorer:
             if torch.any(valid_per_example == 0):
                 raise ValueError(f"PLoP-Attn probe contains no valid tokens at {name}.")
 
+            # The draw key includes the logical module and probe batch.  This makes the random reference
+            # independent of hook registration order while retaining the paper's equal-norm Gaussian draw.
             generator = torch.Generator(device=hidden_states.device)
             seed_payload = f"{self.seed}:{self._active_batch}:{name}".encode()
             draw_seed = int.from_bytes(hashlib.sha256(seed_payload).digest()[:8], "little") % (2**63 - 1)
@@ -165,6 +181,8 @@ class PLoPAttnScorer:
                 random_hidden_states.reshape(-1, random_hidden_states.shape[-1]),
                 epsilon=self.epsilon,
             ).view(hidden_states.shape[:2])
+            # First average tokens within each example.  ``finalize`` then averages examples for a module
+            # and modules for a family, matching the frozen PLoP-Attn selection contract.
             example_scores = (token_scores * attention_mask).sum(dim=-1) / valid_per_example
             if not torch.isfinite(example_scores).all():
                 raise FloatingPointError(f"PLoP-Attn produced a non-finite NFN score at {name}.")
@@ -198,6 +216,8 @@ class PLoPAttnScorer:
         self._handles.clear()
 
     def finalize(self) -> dict[str, Any]:
+        # Accumulate only scalar sufficient statistics across data-parallel ranks.  Module/family ordering
+        # comes from the immutable eligible manifest, not from runtime hook completion order.
         names = [record.name for record in self.eligible.records]
         first_module = self.model.get_submodule(self.eligible.records[0].name)
         first_weight = get_logical_weight(first_module)
@@ -309,6 +329,8 @@ def load_plop_training_selection(
     select_k: int,
     score_manifest_path: str | Path | None = None,
 ) -> tuple[TargetManifest, tuple[str, ...]]:
+    # This is the phase boundary: convert a frozen placement decision back into the current model's
+    # canonical records, then prove it selects complete families and (when supplied) the lowest scores.
     frozen = load_target_manifest(target_manifest_path, expected_kind="selected")
     selected = select_target_manifest(eligible, frozen.exact_target_names)
     if selected.sha256 != frozen.sha256 or selected.records != frozen.records:

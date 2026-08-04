@@ -35,7 +35,20 @@ from .common import (
 
 
 class BiLoraAttnOptimizer(torch.optim.AdamW):
-    r"""Bi-LoRA attention optimizer: AdamW descent on rank r1 and constrained SGD ascent on rank r2."""
+    r"""Bi-LoRA attention optimizer: AdamW descent on rank r1 and constrained SGD ascent on rank r2.
+
+    Contributor map from the Bi-LoRA equations to code:
+
+    - PEFT stores one ``A: [r1+r2, in]`` and one ``B: [out, r1+r2]``.  Slices ``A[:r1]``/``B[:, :r1]``
+      are the primary branch and ``A[r1:]``/``B[:, r1:]`` are the auxiliary branch, giving
+      ``Delta W = s (B1 A1 + B2 A2)`` without introducing new model parameters.
+    - ``_update_attention_pair`` implements the descent/ascent rule.  ``_project_auxiliary_perturbation``
+      implements the constraint and is called once per complete optimizer step, never per microbatch.
+    - Optimizer moments are allocated only for primary slices.  Method-global values such as ``rho`` and
+      the completed-step count must also be round-tripped by ``state_dict``/``load_state_dict``.
+    - ``super().step()`` remains responsible for all non-attention parameters.  New adversarial variants
+      must not route KT fused expert-LoRA or optional LoRA Expert parameters into the ascent branch.
+    """
 
     _STATE_KEY = "kt_bilora_attn"
 
@@ -78,6 +91,8 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
         state: dict[str, Any],
         group: dict[str, Any],
     ) -> None:
+        # ``parameter`` is an FP32 view of one primary slice.  State is keyed by the owning full PEFT
+        # parameter but intentionally has only the slice shape, avoiding moments for the auxiliary rank.
         beta1, beta2 = group["betas"]
         if group.get("amsgrad", False) or group.get("maximize", False):
             raise ValueError("Bi-LoRA-Attn only supports ordinary non-AMSGrad AdamW descent.")
@@ -116,6 +131,8 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
         grad_b = self._full_fp32(lora_b.grad)
         split = self.primary_rank
 
+        # Primary minimizes the task loss; auxiliary maximizes the same accumulated loss.  Applying the
+        # positive gradient directly is equivalent to the author's negate-then-SGD implementation.
         self._adamw_primary_update(a[:split], grad_a[:split], self.state[lora_a], group)
         self._adamw_primary_update(b[:, :split], grad_b[:, :split], self.state[lora_b], group)
         ascent_lr = float(group["lr"]) * self.auxiliary_lr_ratio
@@ -136,6 +153,7 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
             b = self._full_fp32(lora_b)
             a2 = a[self.primary_rank :]
             b2 = b[:, self.primary_rank :]
+            # ||B2 A2||_F^2 = sum((B2^T B2) * (A2 A2^T)); this avoids materializing an out x in matrix.
             module_squared_norm = ((b2.mT @ b2) * (a2 @ a2.mT)).sum().to(dtype=torch.float64)
             if squared_norm is None:
                 squared_norm = module_squared_norm
@@ -151,6 +169,7 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
         if perturbation_norm.item() <= self.rho:
             return
 
+        # Scaling both factors by sqrt(rho / c) scales every B2 A2 product by rho / c.
         factor_scale = (self.rho / perturbation_norm).sqrt()
         for lora_a, lora_b, a, b in auxiliary_factors:
             a[self.primary_rank :].mul_(factor_scale.to(a.device))
@@ -163,6 +182,8 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
         if closure is not None:
             raise ValueError("Bi-LoRA-Attn does not support optimizer closures.")
 
+        # As in AltLoRA, temporarily hide only attention A/B from inherited AdamW.  This preserves the
+        # exact baseline optimizer path (including late KT runtime parameter injection) for everything else.
         attention_grads: list[tuple[torch.Tensor, torch.Tensor | None]] = []
         for group in self.param_groups:
             if group.get("variant_role") != "attention_pair":
@@ -218,6 +239,8 @@ class BiLoraAttnOptimizer(torch.optim.AdamW):
 
 def register_bilora_eval_hooks(pairs: tuple[LoraPair, ...], primary_rank: int) -> None:
     r"""Zero auxiliary A channels only while each audited PEFT attention module is in eval mode."""
+    # Masking A's last channels is algebraically equivalent to dropping B2 A2, but avoids replacing or
+    # monkeypatching PEFT's Linear class.  Keep future inference-only branch rules local in the same way.
     for pair in pairs:
         existing_rank = getattr(pair.module, "_kt_bilora_primary_rank", None)
         if existing_rank is not None:
@@ -279,6 +302,8 @@ def _slice_primary_weights(
 
 def export_bilora_primary_adapter(adapter_dir: str | Path, variant_config: KTLoraVariantConfig) -> Path:
     r"""Write a deployable rank-r1 PEFT adapter while preserving non-LoRA modules such as LoRA Expert."""
+    # Deployment is a separate artifact: slice only attention A/B tensors, rewrite PEFT rank/alpha so the
+    # scale stays constant, and copy independent KT fused/LoRA Expert payloads without transformation.
     adapter_path = Path(adapter_dir)
     config_path = adapter_path / "adapter_config.json"
     if not config_path.is_file():
