@@ -200,14 +200,23 @@ class PLoPAttnScorer:
         self._active_batch = int(batch_index)
         self._attention_mask = attention_mask
         self._seen_in_batch.clear()
+        body_failed = False
         try:
-            with torch.inference_mode():
+            # FSDP2 unsharding temporarily reads parameter version counters.  ``inference_mode`` creates
+            # versionless tensors and therefore fails before the first projection hook on torch 2.9.  PLoP
+            # only needs to suppress autograd, so ``no_grad`` is the exact (and FSDP-compatible) contract.
+            with torch.no_grad():
                 yield
+        except BaseException:
+            body_failed = True
+            raise
         finally:
             missing = sorted(set(self._score_sum) - self._seen_in_batch)
             self._active_batch = None
             self._attention_mask = None
-            if missing:
+            # Preserve the original forward exception.  The completeness error is meaningful only after a
+            # successful forward; raising it while unwinding would hide the actual runtime incompatibility.
+            if missing and not body_failed:
                 raise RuntimeError(f"PLoP-Attn probe did not invoke every eligible target: {missing[:5]}.")
 
     def close(self) -> None:

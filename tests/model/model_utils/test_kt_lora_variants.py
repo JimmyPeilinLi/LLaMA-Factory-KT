@@ -42,6 +42,7 @@ from llamafactory.model.lora_variants.common import (
 from llamafactory.model.lora_variants.plop_attn import (
     PLOP_EXACT_TARGETS_NAME,
     PLOP_NFN_SCORES_NAME,
+    PLoPAttnScorer,
     compute_nfn_per_token,
     load_plop_training_selection,
     write_plop_artifacts,
@@ -78,6 +79,19 @@ class ToyAttentionModel(nn.Module):
                 ToyLayer(ToyFullAttention(width), "self_attn"),
             ]
         )
+
+    def forward(self, hidden_states):
+        for layer in self.layers:
+            attention = getattr(layer, "linear_attn", None) or getattr(layer, "self_attn")
+            for family in ("in_proj_a", "in_proj_b", "in_proj_qkv", "in_proj_z", "out_proj"):
+                projection = getattr(attention, family, None)
+                if projection is not None:
+                    hidden_states = projection(hidden_states)
+            for family in ("q_proj", "k_proj", "v_proj", "o_proj"):
+                projection = getattr(attention, family, None)
+                if projection is not None:
+                    hidden_states = projection(hidden_states)
+        return hidden_states
 
 
 class FakePeftLinear(nn.Module):
@@ -354,6 +368,26 @@ def test_plop_nfn_matches_tokenwise_reference_and_preserves_random_norm():
     torch.testing.assert_close(random_hidden_states.norm(dim=-1), hidden_states.norm(dim=-1))
     expected = (hidden_states @ weight.mT).norm(dim=-1) / (random_hidden_states @ weight.mT).norm(dim=-1)
     torch.testing.assert_close(compute_nfn_per_token(weight, hidden_states, random_hidden_states), expected)
+
+
+def test_plop_probe_uses_no_grad_without_masking_forward_errors():
+    model = ToyAttentionModel()
+    eligible = resolve_eligible_gpu_lora_targets(model, require_gpu=False)
+    scorer = PLoPAttnScorer(model, eligible)
+    hidden_states = torch.randn(2, 3, 4)
+    attention_mask = torch.ones(2, 3, dtype=torch.bool)
+    try:
+        with scorer.batch(0, attention_mask):
+            assert not torch.is_grad_enabled()
+            assert not torch.is_inference_mode_enabled()
+            model(hidden_states)
+        assert all(record["probe_examples"] == 2 for record in scorer.finalize()["module_scores"])
+
+        with pytest.raises(RuntimeError, match="forward sentinel"):
+            with scorer.batch(1, attention_mask):
+                raise RuntimeError("forward sentinel")
+    finally:
+        scorer.close()
 
 
 def test_plop_artifacts_select_and_reload_exact_lowest_families(tmp_path):
